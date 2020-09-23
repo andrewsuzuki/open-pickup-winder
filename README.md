@@ -1,12 +1,12 @@
-# Open Pickup: Winder
+# Open Pickup: CNC Pickup Winder
 
-Open-source guitar pickup winder.
+Open-source CNC guitar pickup winder.
 
-Contains `design` files, Arduino `controller` code, and `gui` code.
+Contains `design` files (Fusion 360), `controller` code (Arduino/C++), and `gui` code (Clojure).
 
 ## Credits
 
-- Andrew Suzuki - @andrewsuzuki - andrewsuzuki.com
+- Andrew Suzuki - @andrewsuzuki - [andrewsuzuki.com](https://andrewsuzuki.com)
 
 ## License
 
