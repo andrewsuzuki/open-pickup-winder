@@ -7,8 +7,8 @@ Status
 - Target winds
 - Winds completed
 - Direction
-- Target RPM
-- Actual RPM
+- Target speed
+- Actual speed
 - Threader position
 - Threader left limit
 - Bobbin Height (or threader right limit)
@@ -19,16 +19,16 @@ Actions
 - Start
 - Stop
 - Pause
+- Set winder direction CW/CCW
+- Set target speed [#]
+- Set target winds [#]
+- Set winds per layer [#]
+    - Wire diameter => winds per layer
+- Set bobbin height [#]
 - Home threader
-- Set target winds
-- Direction CW/CCW
-- Set target RPM
 - Set threader left limit (at current position)
 - Jog threader left
 - Jog threader right
-- Set bobbin height
-- Set winds per layer
-    - Wire diameter => winds per layer
 
 ### User Workflow
 
@@ -42,5 +42,9 @@ Actions
 7. User sets bobbin height
 8. User sets winds per layer
 9. User sets direction (if needed)
-10. User sets target RPM
+10. User sets target speed
 11. User clicks Start
+12. [Controller winds pickup and sends status updates]
+13. User removes pickup from winder
+14. User clicks Reset (if winding another)
+15. User repeats steps [4/11]-15

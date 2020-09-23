@@ -2,35 +2,52 @@
 
 // TODO
 // - Test queue prints
-// - High speed limit
-// - Consider having a third winder speed variable that counts steps per second.
-//   Currently, there's a lot of math going on to convert between RPM and steps per second,
-//   though perhaps the effect is trivial.
-// - set target winds / reset
-// - planned deceleration (before target winds)
-// - threader stuff
-// - enable pin
-// - winder direction (note: should be stopped and winds = 0 before reset)
-// - reset wind counter
+// - Consider having a third winder speed variable that counts steps per second. Reduce float calcs.
+// - Planned deceleration (before target winds)
+// - Threader stuff
+// - Winder enable
+// - Set winder direction (note: should be stopped and winds = 0 before reset)
+// - Reset wind counter
 
 // Define pins
 const unsigned int winderDirPin = 12;
 const unsigned int winderStepPin = 11;
+const unsigned int threaderDirPin = 14;
+const unsigned int threaderStepPin = 13;
+const unsigned int limitSwitchPin = 15;
 
 // Constants
 const unsigned long serialSpeed = 115200; // bps
+const unsigned int maxCommandLength = 40; // bytes
 const unsigned int winderStepsPerRevolution = 200;
 const unsigned int winderAcceleration = 2000; // steps/s^2
 const unsigned int winderDeceleration = 2500; // steps/s^2
 const unsigned int minWinderSpeed = 100; // rpm (also starting speed)
+const unsigned int maxWinderSpeed = 1200; // rpm
 const unsigned int threaderStepsPerMillimeter = 7;
 //
-typedef enum { NONE, SET_TARGET_SPEED, STOP } commands;
+typedef enum {
+  NONE,
+  PING,
+  SET_WINDER_DIRECTION_CW,
+  SET_WINDER_DIRECTION_CCW,
+  SET_TARGET_SPEED,
+  SET_TARGET_WINDS,
+  RESET_WINDS,
+  SET_WINDS_PER_LAYER,
+  SET_BOBBIN_HEIGHT,
+  SET_THREADER_LEFT_LIMIT,
+  JOG_THREADER_RIGHT,
+  JOG_THREADER_LEFT
+  HOME_THREADER
+} command;
+typedef enum { LEFT, RIGHT } direction;
 
 // Global variables
 ArduinoQueue<char> printOutQueue(50);
 commands currentCommand = NONE;
 int currentInputValue = 0;
+direction winderDirection = RIGHT; // RIGHT = CW, LEFT = CCW
 unsigned long winds = 0; // number of winds (winder revolutions since last reset)
 unsigned int winderPosition = 0; // # step, up to winderStepsPerRevolution (exclusive)
 unsigned long winderLastStepTime = 0; // winder: time of last step
@@ -39,7 +56,11 @@ float winderActualSpeed = 0; // winder: actual/current rpm
 unsigned long winderActualStepInterval = 0; // winder: actual/current interval between steps in micros (derived from winderActualSpeed)
 unsigned int threaderPosition = 0;
 unsigned int threaderTargetPosition = 0;
-unsigned int threaderDirection = 0;
+direction threaderDirection = RIGHT;
+unsigned int threaderLeftLimit = 0;
+unsigned int targetWinds = 0;
+unsigned int windsPerLayer = 0;
+unsigned int bobbinHeight = 0;
 
 void step(int stepPin) {
   winderLastStepTime = micros();
@@ -54,14 +75,65 @@ void qPrint(const char* str) {
   }
 }
 
-void completeCommand()
-{
+void pong() {
+  qPrint("PONG\n");
+}
+
+void jogThreader(float distance, direction dir) {
+  // TODO
+}
+
+void homeThreader() {
+  // TODO set direction to left
+  // TODO timeout; this is kind of primitive
+  while (digitalRead(limitSwitchPin) == LOW) {
+    step(threaderStepPin);
+    delayMicroseconds(1000); // TODO tweak
+  }
+  // Zero out
+  threaderPosition = 0;
+  // Back off
+  jogThreader(10.0, RIGHT);
+}
+
+void executeCommand(command cmd) {
   switch (currentCommand) {
+    case PING:
+      pong();
+      break;
+    case SET_WINDER_DIRECTION_CW:
+      winderDirection = RIGHT;
+      break;
+    case SET_WINDER_DIRECTION_CCW:
+      winderDirection = LEFT;
+      break;
     case SET_TARGET_SPEED:
       setWinderTargetSpeed(currentInputValue);
       break;
-    case STOP:
-      setWinderTargetSpeed(0);
+    case SET_TARGET_WINDS:
+      targetWinds = currentInputValue;
+      break;
+    case RESET_WINDS:
+      winds = 0;
+      winderPosition = 0;
+      break;
+    case SET_WINDS_PER_LAYER:
+      windsPerLayer = currentInputValue;
+      break;
+    case SET_BOBBIN_HEIGHT:
+      bobbinHeight = currentInputValue;
+      break;
+    case SET_THREADER_LEFT_LIMIT:
+      threaderLeftLimit = threaderPosition;
+      break;
+    case JOG_THREADER_RIGHT:
+      jogThreader(currentInputValue, RIGHT);
+      break;
+    case JOG_THREADER_LEFT:
+      jogThreader(currentInputValue, LEFT);
+      break;
+    case HOME_THREADER:
+      homeThreader();
       break;
   }
 
@@ -69,27 +141,55 @@ void completeCommand()
   currentInputValue = 0;
 }
 
+command parseCommand(const char* cmdString) {
+  if (cmdString == "P") return PING;
+  if (cmdString == "SET_WINDER_DIRECTION_CW") return SET_WINDER_DIRECTION_CW;
+  if (cmdString == "SET_WINDER_DIRECTION_CCW") return SET_WINDER_DIRECTION_CCW;
+  if (cmdString == "S") return SET_TARGET_SPEED;
+  if (cmdString == "SET_TARGET_WINDS") return SET_TARGET_WINDS;
+  if (cmdString == "RESET_WINDS") return RESET_WINDS;
+  if (cmdString == "SET_WINDS_PER_LAYER") return SET_WINDS_PER_LAYER;
+  if (cmdString == "SET_BOBBIN_HEIGHT") return SET_BOBBIN_HEIGHT;
+  if (cmdString == "SET_THREADER_LEFT_LIMIT") return SET_THREADER_LEFT_LIMIT;
+  if (cmdString == "JOG_THREADER_RIGHT") return JOG_THREADER_RIGHT;
+  if (cmdString == "JOG_THREADER_LEFT") return JOG_THREADER_LEFT;
+  if (cmdString == "HOME_THREADER") return HOME_THREADER;
+  return NONE;
+}
+
 void processIncomingByte(const byte c) {
+  static char inputLine[maxCommandLength];
+  static unsigned int inputPos = 0;
+
   if (isdigit(c)) {
     currentInputValue *= 10;
     currentInputValue += c - '0';
   } else {
-    // Set the new state, if we recognize it
     switch (c) {
-      case 'T':
-        currentCommand = SET_TARGET_SPEED;
+      case '\n':
+        inputLine[inputPos] = 0; // terminating null byte
+        executeCommand(parseCommand(inputLine));
+        // Reset buffer for next time
+        inputPos = 0;
         break;
-      case 'S':
-        currentCommand = STOP;
+      case '\r':
+        // Discard carriage return
         break;
       default:
-        completeCommand();
+        if (inputPos < (maxCommandLength - 1)) {
+          inputLine[inputPos++] = c;
+        }
         break;
     }
   }
 }
 
 void setWinderTargetSpeed(float speed) {
+  if (speed > maxWinderSpeed) {
+    // Greater than max acceptable speed; do nothing
+    return;
+  }
+
   winderTargetSpeed = speed;
   recalculateWinderActualSpeed();
 }
@@ -152,11 +252,12 @@ void setup()
 {
   Serial.begin(serialSpeed);
 
-  // Declare pins as outputs
+  // Set pin modes
   pinMode(winderDirPin, OUTPUT);
   pinMode(winderStepPin, OUTPUT);
-
-  qPrint("ready\n");
+  pinMode(threaderDirPin, OUTPUT);
+  pinMode(threaderStepPin, OUTPUT);
+  pinMode(limitSwitchPin, INPUT);
 }
 
 void loop()
