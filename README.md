@@ -1,8 +1,8 @@
-# Open Pickup: Pickup Winder
+# Open Pickup: Winder
 
-Open-source pickup winder.
+Open-source guitar pickup winder.
 
-Contains design files, Arduino controller code, and GUI code.
+Contains `design` files, Arduino `controller` code, and `gui` code.
 
 ## Credits
 
