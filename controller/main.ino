@@ -2,7 +2,9 @@
 #include <AccelStepper.h>
 
 // TODO
-// - Relay status / messages back
+// - Confirm/fail messages for all SET/reset commands
+// - Potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
+// - Does winds get to targetWinds, or -1?
 
 #define winderEnablePin 16
 #define winderStepPin 9
@@ -68,30 +70,48 @@ boolean isHomed() {
   return homed == true;
 }
 
-void qPrint(const char* str) {
-  for (; *str != '\0'; str++) {
-    printOutQueue.enqueue(*str);
+void qPrint(String str) {
+  for (unsigned int i = 0; i < str.length(); i++) {
+    printOutQueue.enqueue(str[i]);
+  }
+}
+
+void message(String type, unsigned long outputValue = 0, boolean immediate = false) {
+  String msg = type + outputValue + "\n";
+  if (immediate) {
+    Serial.print(msg);
+  } else {
+    qPrint(msg);
   }
 }
 
 void pong() {
-  qPrint("PONG\n");
+  message("PONG");
 }
 
 // Home threader (blocking). Moves to the left until it hits the limit switch, then it zeroes out.
 void homeThreader() {
+  boolean success = true;
   threader.move(-1 * threaderTravel * threaderStepsPerMillimeter); // move at most travel
   while (digitalRead(limitSwitchPin) == LOW) {
     if (!threader.run()) {
+      success = false;
       break;
     }
   }
-  // Zero out
-  threader.setCurrentPosition(0);
-  // Back off
-  threader.move(threaderBackOff * threaderStepsPerMillimeter);
-  // Mark homed
-  homed = true;
+  if (success) {
+    // Zero out
+    threader.setCurrentPosition(0);
+    // Back off
+    threader.move(threaderBackOff * threaderStepsPerMillimeter);
+    // Mark homed
+    homed = true;
+    // Message
+    message("HOMED");
+  } else {
+    homed = false;
+    message("HOMING_FAILURE");
+  }
 }
 
 unsigned int windsToSteps(unsigned int winds) {
@@ -100,6 +120,10 @@ unsigned int windsToSteps(unsigned int winds) {
 
 float rpmToStepsPerSecond(unsigned int rpm) {
   return windsToSteps(rpm) / 60.0;
+}
+
+unsigned int stepsPerSecondToRpm(float sss) {
+  return sss * 60 / winderStepsPerRevolution;
 }
 
 // Derive threader step position from winder step position
@@ -125,11 +149,7 @@ unsigned int deriveThreaderPosition() {
 void start() {
   // Ensure threader is in correct [starting] position (blocks)
   threader.moveTo(deriveThreaderPosition());
-  while (true) {
-    if (!threader.run()) {
-      break;
-    }
-  }
+  threader.runToPosition();
 
   int directionMultiplier = winderDirection == RIGHT ? 1 : -1;
   winder.moveTo(directionMultiplier * windsToSteps(targetWinds));
@@ -191,11 +211,15 @@ void executeCommand(command cmd) {
     case JOG_THREADER_RIGHT:
       if (isReset() && isHomed()) {
         threader.move(threaderStepsPerMillimeter * currentInputValue);
+        threader.runToPosition();
+        message("JOG_DONE");
       }
       break;
     case JOG_THREADER_LEFT:
       if (isReset() && isHomed()) {
         threader.move(-1 * threaderStepsPerMillimeter * currentInputValue);
+        threader.runToPosition();
+        message("JOG_DONE");
       }
       break;
     case HOME_THREADER:
@@ -254,13 +278,11 @@ void processIncomingByte(const byte c) {
   }
 }
 
-// Sync winds with winder position. Print new count if changed.
-void updateWinds() {
+// Sync winds with winder position. Return true if changed.
+boolean updateWinds() {
   unsigned int old = winds;
   winds = abs(winder.currentPosition()) / winderStepsPerRevolution; // (floor)
-  if (old != winds) {
-    qPrint("W" + winds);
-  }
+  return old != winds;
 }
 
 void setup()
@@ -276,6 +298,8 @@ void setup()
   threader.setAcceleration(threaderAcceleration);
   threader.setMaxSpeed(threaderMaxSpeed);
 }
+
+boolean wasRunning = false;
 
 void loop()
 {
@@ -293,6 +317,11 @@ void loop()
 
   boolean isRunning = winder.isRunning();
 
+  if (isRunning != wasRunning) {
+    // Message started / stopped
+    message(isRunning ? "STARTED" : "STOPPED");
+  }
+
   if (isRunning != winderEnabled) {
     digitalWrite(winderEnablePin, isRunning ? HIGH : LOW);
     winderEnabled = isRunning;
@@ -302,10 +331,17 @@ void loop()
 
   if (isRunning) {
     // Sync wind counter
-    updateWinds();
+    if (updateWinds()) {
+      // Updated
+      message("W", winds);
+      // Also send actual speed
+      message("A", stepsPerSecondToRpm(winder.speed()));
+    }
 
     // Sync threader position with winder position
     threader.moveTo(deriveThreaderPosition());
     threader.run();
   }
+
+  wasRunning = isRunning;
 }
