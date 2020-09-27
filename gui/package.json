@@ -1,5 +1,6 @@
 {
   "name": "open-pickup-winder-gui",
+  "productName": "Open Pickup Winder",
   "version": "0.1.0",
   "license": "MIT",
   "scripts": {
@@ -14,14 +15,20 @@
     "react": "^16.13.1",
     "react-dom": "^16.13.1",
     "serialport": "^9.0.1",
-    "source-map-support": "^0.5.16"
+    "source-map-support": "^0.5.16",
+    "zustand": "3.1.0"
   },
   "devDependencies": {
     "@babel/preset-react": "^7.10.4",
     "electron": "8.2.0",
     "electron-builder": "^22.4.1",
     "electron-webpack": "^2.8.2",
-    "electron-webpack-eslint": "^6.0.0",
     "webpack": "~4.42.1"
+  },
+  "electronWebpack": {
+    "title": "Open Pickup Winder",
+    "renderer": {
+      "webpackConfig": "webpack.renderer.additions.js"
+    }
   }
 }

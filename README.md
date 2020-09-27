@@ -2,7 +2,7 @@
 
 Open-source CNC guitar pickup winder.
 
-Contains `design` files (Fusion 360), `controller` code (Arduino/C++), and `gui` code (Clojure).
+Contains `design` files (Fusion 360), `controller` code (Arduino/C++), and `gui` code (JS/Electron).
 
 ## Credits
 

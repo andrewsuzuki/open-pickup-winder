@@ -1,55 +1,87 @@
-import React from "react";
+import React, { useEffect } from "react";
 import ReactDOM from "react-dom";
+import create from "zustand";
+import SerialPort from "serialport";
 
-// import SerialPort from "serialport";
-// SerialPort.list().then((ports) => console.log(ports));
+import { portCouldBePickupWinder, useInterval } from "./utils";
 
-const CountContext = React.createContext();
+import "./styles.css";
 
-function countReducer(state, action) {
-  switch (action.type) {
-    case "INCREMENT": {
-      return { count: state.count + 1 };
-    }
-    default: {
-      throw new Error(`Unsupported action type: ${action.type}`);
-    }
-  }
+const DIRECTION_CW = "CW";
+const DIRECTION_CCW = "CCW";
+
+const useStore = create((set) => ({
+  // Connnection
+  connection: null,
+  availablePorts: [],
+
+  // Status
+  homed: false,
+  running: false,
+  winds: 0,
+  speed: 0,
+  threaderLeftLimit: 0,
+
+  // Parameters
+  winderDirection: DIRECTION_CW,
+  targetSpeed: 0,
+  targetWinds: 0,
+  windsPerLayer: 0,
+  bobbinHeight: 0,
+
+  setAvailablePorts: (availablePorts) => set(() => ({ availablePorts })),
+}));
+
+function refreshAvailablePorts() {
+  SerialPort.list()
+    .then((ports) => ports.filter(portCouldBePickupWinder))
+    .catch(() => [])
+    .then(useStore.getState().setAvailablePorts);
 }
 
-function CountProvider(props) {
-  const [state, dispatch] = React.useReducer(countReducer, { count: 0 });
-  const value = React.useMemo(() => [state, dispatch], [state]);
-  return <CountContext.Provider value={value} {...props} />;
+function ConnectPage() {
+  const availablePorts = useStore((state) => state.availablePorts);
+
+  useEffect(refreshAvailablePorts, []);
+  useInterval(refreshAvailablePorts, 3000);
+
+  return (
+    <div>
+      <h2>Connect</h2>
+      {availablePorts.length === 0 ? (
+        <p>No pickup winder found.</p>
+      ) : (
+        <>
+          <select>
+            {availablePorts.map((ap) => (
+              <option key={ap.path}>{ap.path}</option>
+            ))}
+          </select>
+          <button onClick={() => console.log("TODO connect...")}>
+            Connect
+          </button>
+        </>
+      )}
+    </div>
+  );
 }
 
-function useCount() {
-  const context = React.useContext(CountContext);
-  if (!context) {
-    throw new Error(`useCount must be used within a CountProvider`);
-  }
-  const [state, dispatch] = context;
-  const increment = () => dispatch({ type: "INCREMENT" });
-  return {
-    state,
-    dispatch,
-    increment,
-  };
-}
-
-function Counter() {
-  const {
-    state: { count },
-    increment,
-  } = useCount();
-  return <button onClick={increment}>{count}</button>;
+function ControlPage() {
+  return (
+    <div>
+      <input onBlur={() => console.log("blur")} />
+    </div>
+  );
 }
 
 function Root() {
+  const connection = useStore((state) => state.connection);
+
   return (
-    <CountProvider>
-      <Counter />
-    </CountProvider>
+    <div>
+      <h1>Open Pickup Winder</h1>
+      {connection ? <ControlPage /> : <ConnectPage />}
+    </div>
   );
 }
 
