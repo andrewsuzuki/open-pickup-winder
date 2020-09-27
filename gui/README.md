@@ -3,32 +3,30 @@
 ## UI
 
 Status
-- Online?
-- Target winds
+- Connected?
+- Homed?
+- Running?
 - Winds completed
-- Direction
-- Target speed
 - Actual speed
-- Threader position
-- Threader left limit
-- Bobbin Height (or threader right limit)
-- Winds per layer
+- Threader left limit (mm)
 
-Actions
+Controls
 - Connect
 - Start
 - Stop
-- Pause
-- Set winder direction CW/CCW
-- Set target speed [#]
-- Set target winds [#]
-- Set winds per layer [#]
-    - Wire diameter => winds per layer
-- Set bobbin height [#]
+- Reset winds
 - Home threader
 - Set threader left limit (at current position)
-- Jog threader left
-- Jog threader right
+- Jog threader left (mm)
+- Jog threader right (mm)
+- Jog threader to left limit / start
+
+Parameters
+- Set winder direction (CW/CCW)
+- Set target speed (rpm)
+- Set target winds (#)
+- Set winds per layer (#)
+- Set bobbin height (mm)
 
 ### User Workflow
 
@@ -46,5 +44,5 @@ Actions
 11. User clicks Start
 12. [Controller winds pickup and sends status updates]
 13. User removes pickup from winder
-14. User clicks Reset (if winding another)
+14. User clicks Reset (if winding another), and probably also "jog threader to start"
 15. User repeats steps [4/11]-15

@@ -1,13 +1,5 @@
-# idea
-/.idea
-
-# lein
-/.lein-repl-history
-/target
-/.nrepl-port
-
-# clj
-/.cpcache
-
-# calva
-/.calva
+.DS_Store
+dist/
+node_modules/
+thumbs.db
+.idea/

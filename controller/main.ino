@@ -4,20 +4,21 @@
 // TODO
 // - Confirm/fail messages for all SET/reset commands
 // - Potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
-// - Does winds get to targetWinds, or -1?
+
+#define version 1
 
 #define winderEnablePin 16
 #define winderStepPin 9
 #define winderDirPin 12
 #define threaderStepPin 13
 #define threaderDirPin 14
-#define limitSwitchPin 15
+#define limitSwitchPin 8
 
 #define serialSpeed 115200
 #define maxCommandLength 40
 
 #define winderStepsPerRevolution 200
-#define winderAcceleration 2000
+#define winderAcceleration 500
 #define winderMaxAllowedSpeed 1200
 
 #define threaderStepsPerMillimeter 80
@@ -48,7 +49,6 @@ typedef enum { LEFT, RIGHT } direction;
 
 // Global variables
 ArduinoQueue<char> printOutQueue(100);
-command currentCommand = NONE;
 int currentInputValue = 0;
 direction winderDirection = RIGHT; // RIGHT = CW, LEFT = CCW
 boolean winderEnabled = false;
@@ -56,7 +56,7 @@ unsigned int winds = 0;
 unsigned int targetWinds = 0;
 unsigned int windsPerLayer = 0;
 unsigned int bobbinHeight = 0;
-unsigned int threaderLeftLimit = 0;
+unsigned long threaderLeftLimit = 0;
 boolean homed = false;
 
 AccelStepper winder(1, winderStepPin, winderDirPin);
@@ -64,6 +64,10 @@ AccelStepper threader(1, threaderStepPin, threaderDirPin);
 
 boolean isReset() {
   return winds == 0 && winder.currentPosition() == 0 && !winder.isRunning();
+}
+
+boolean hasParams() {
+  return windsPerLayer > 0 && bobbinHeight > 0 && targetWinds > 0 && threaderLeftLimit > 0;
 }
 
 boolean isHomed() {
@@ -102,10 +106,11 @@ void homeThreader() {
   if (success) {
     // Zero out
     threader.setCurrentPosition(0);
-    // Back off
-    threader.move(threaderBackOff * threaderStepsPerMillimeter);
     // Mark homed
     homed = true;
+    // Back off
+    threader.move(threaderBackOff * threaderStepsPerMillimeter);
+    threader.runToPosition();
     // Message
     message("HOMED");
   } else {
@@ -114,26 +119,26 @@ void homeThreader() {
   }
 }
 
-unsigned int windsToSteps(unsigned int winds) {
-  return winds * winderStepsPerRevolution;
+unsigned long windsToSteps(unsigned int winds) {
+  return (long)winds * winderStepsPerRevolution;
 }
 
 float rpmToStepsPerSecond(unsigned int rpm) {
-  return windsToSteps(rpm) / 60.0;
+  return (float)rpm * winderStepsPerRevolution / 60;
 }
 
 unsigned int stepsPerSecondToRpm(float sss) {
-  return sss * 60 / winderStepsPerRevolution;
+  return sss * 60 / winderStepsPerRevolution; // (floor)
 }
 
 // Derive threader step position from winder step position
-unsigned int deriveThreaderPosition() {
-  unsigned int winderDistance = abs(winder.currentPosition());
-  unsigned int winderStepsPerLayer = winderStepsPerRevolution * windsPerLayer;
-  unsigned int winderStepsFromLayerStart = winderDistance % winderStepsPerLayer;
+unsigned long deriveThreaderPosition() {
+  unsigned long winderDistance = abs(winder.currentPosition());
+  unsigned long winderStepsPerLayer = winderStepsPerRevolution * windsPerLayer;
+  unsigned long winderStepsFromLayerStart = winderDistance % winderStepsPerLayer;
 
-  unsigned int threaderStepsPerLayer = threaderStepsPerMillimeter * bobbinHeight;
-  unsigned int threaderStepsFromLayerStart = threaderStepsPerLayer * winderStepsFromLayerStart / winderStepsPerLayer; // (floor)
+  unsigned long threaderStepsPerLayer = threaderStepsPerMillimeter * bobbinHeight;
+  unsigned long threaderStepsFromLayerStart = threaderStepsPerLayer * winderStepsFromLayerStart / winderStepsPerLayer; // (floor)
 
   unsigned int layer = winderDistance / winderStepsPerLayer; // (floor)
 
@@ -156,12 +161,12 @@ void start() {
 }
 
 void executeCommand(command cmd) {
-  switch (currentCommand) {
+  switch (cmd) {
     case PING:
       pong();
       break;
     case START:
-      if (isHomed()) {
+      if (isHomed() && hasParams()) {
         start();
       }
       break;
@@ -180,8 +185,10 @@ void executeCommand(command cmd) {
       }
       break;
     case RESET_WINDS:
-      winds = 0;
-      winder.setCurrentPosition(0);
+      if (!winder.isRunning()) {
+        winds = 0;
+        winder.setCurrentPosition(0);
+      }
       break;
     case SET_WINDER_DIRECTION_CW:
       if (isReset()) {
@@ -227,13 +234,15 @@ void executeCommand(command cmd) {
         homeThreader();
       }
       break;
+    case NONE:
+      message("UNRECOGNIZED");
+      break;
   }
 
-  currentCommand = NONE;
   currentInputValue = 0;
 }
 
-command parseCommand(const char* cmdString) {
+command parseCommand(String cmdString) {
   if (cmdString == "P") return PING;
   if (cmdString == "START") return START;
   if (cmdString == "S") return STOP;
@@ -251,7 +260,7 @@ command parseCommand(const char* cmdString) {
   return NONE;
 }
 
-void processIncomingByte(const byte c) {
+void processIncomingByte(const int c) {
   static char inputLine[maxCommandLength];
   static unsigned int inputPos = 0;
 
@@ -297,6 +306,9 @@ void setup()
   threader.setPinsInverted(true); // direction should be inverted due to stepper/clamp position
   threader.setAcceleration(threaderAcceleration);
   threader.setMaxSpeed(threaderMaxSpeed);
+
+  message("READY");
+  message("VERSION", version);
 }
 
 boolean wasRunning = false;
