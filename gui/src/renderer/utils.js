@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import SerialPort from "serialport";
+import Readline from "@serialport/parser-readline";
 
 export function useInterval(callback, delay) {
   const savedCallback = useRef();
@@ -19,4 +21,28 @@ export function useInterval(callback, delay) {
 
 export function portCouldBePickupWinder(port) {
   return port && port.manufacturer && port.manufacturer.includes("Arduino");
+}
+
+export function openConnection(portPath) {
+  return new Promise((resolve, reject) => {
+    const port = new SerialPort(portPath, {
+      autoOpen: false,
+      baudRate: 115200,
+    });
+    const parser = port.pipe(new Readline());
+    // Resolve promise after receiving ready message through listener,
+    // then remove listener
+    function readyListener(s) {
+      if (s === "READY0") {
+        resolve({ port, parser });
+        parser.removeListener("data", readyListener);
+      }
+    }
+    parser.on("data", readyListener);
+    port.open((errMaybe) => {
+      if (errMaybe) {
+        reject(errMaybe);
+      }
+    });
+  });
 }

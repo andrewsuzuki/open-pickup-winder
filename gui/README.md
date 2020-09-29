@@ -12,6 +12,7 @@ Status
 
 Controls
 - Connect
+- Disconnect
 - Start
 - Stop
 - Reset winds

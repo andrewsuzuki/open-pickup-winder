@@ -2,7 +2,9 @@
 #include <AccelStepper.h>
 
 // TODO
-// - Confirm/fail messages for all SET/reset commands
+// - Different acceleration value for stops
+// - Slower ramp up at cold start?
+// - Confirm/fail messages for all SET/reset commands?
 // - Potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
 
 #define version 1
@@ -41,6 +43,7 @@ typedef enum {
   SET_WINDS_PER_LAYER,
   SET_BOBBIN_HEIGHT,
   SET_THREADER_LEFT_LIMIT,
+  JOG_THREADER_TO_LEFT_LIMIT,
   JOG_THREADER_RIGHT,
   JOG_THREADER_LEFT,
   HOME_THREADER
@@ -89,6 +92,15 @@ void message(String type, unsigned long outputValue = 0, boolean immediate = fal
   }
 }
 
+void messageFloat(String type, float outputValue = 0.0, boolean immediate = false) {
+  String msg = type + outputValue + "\n";
+  if (immediate) {
+    Serial.print(msg);
+  } else {
+    qPrint(msg);
+  }
+}
+
 void pong() {
   message("PONG");
 }
@@ -108,14 +120,14 @@ void homeThreader() {
     threader.setCurrentPosition(0);
     // Mark homed
     homed = true;
-    // Back off
+    // Back off (blocking)
     threader.move(threaderBackOff * threaderStepsPerMillimeter);
     threader.runToPosition();
     // Message
-    message("HOMED");
+    message("HOMED", 0, true);
   } else {
     homed = false;
-    message("HOMING_FAILURE");
+    message("HOMING_FAILURE", 0, true);
   }
 }
 
@@ -188,6 +200,7 @@ void executeCommand(command cmd) {
       if (!winder.isRunning()) {
         winds = 0;
         winder.setCurrentPosition(0);
+        message("WINDS_RESET");
       }
       break;
     case SET_WINDER_DIRECTION_CW:
@@ -213,20 +226,28 @@ void executeCommand(command cmd) {
     case SET_THREADER_LEFT_LIMIT:
       if (isReset() && isHomed()) {
         threaderLeftLimit = threader.currentPosition();
+        messageFloat("THREADER_LEFT_LIMIT", (float)threaderLeftLimit / threaderStepsPerMillimeter);
+      }
+      break;
+    case JOG_THREADER_TO_LEFT_LIMIT:
+      if (isReset() && isHomed()) {
+        threader.moveTo(threaderLeftLimit);
+        threader.runToPosition();
+        message("JOG_DONE", 0, true);
       }
       break;
     case JOG_THREADER_RIGHT:
       if (isReset() && isHomed()) {
         threader.move(threaderStepsPerMillimeter * currentInputValue);
         threader.runToPosition();
-        message("JOG_DONE");
+        message("JOG_DONE", 0, true);
       }
       break;
     case JOG_THREADER_LEFT:
       if (isReset() && isHomed()) {
         threader.move(-1 * threaderStepsPerMillimeter * currentInputValue);
         threader.runToPosition();
-        message("JOG_DONE");
+        message("JOG_DONE", 0, true);
       }
       break;
     case HOME_THREADER:
@@ -254,7 +275,8 @@ command parseCommand(String cmdString) {
   if (cmdString == "SET_WINDS_PER_LAYER") return SET_WINDS_PER_LAYER;
   if (cmdString == "SET_BOBBIN_HEIGHT") return SET_BOBBIN_HEIGHT;
   if (cmdString == "SET_THREADER_LEFT_LIMIT") return SET_THREADER_LEFT_LIMIT;
-  if (cmdString == "JOG_THREADER_RIGHT") return JOG_THREADER_RIGHT;
+  if (cmdString == "JOG_THREADER_TO_LEFT_LIMIT") return JOG_THREADER_TO_LEFT_LIMIT;
+  if (cmdString == "JOG_THREADER_LEFT") return JOG_THREADER_LEFT;
   if (cmdString == "JOG_THREADER_LEFT") return JOG_THREADER_LEFT;
   if (cmdString == "HOME_THREADER") return HOME_THREADER;
   return NONE;
@@ -329,7 +351,13 @@ void loop()
 
   boolean isRunning = winder.isRunning();
 
+  // Check if just stopped running
   if (isRunning != wasRunning) {
+    // If stopped, send speed = 0
+    if (!isRunning) {
+      message("A", 0);
+    }
+
     // Message started / stopped
     message(isRunning ? "STARTED" : "STOPPED");
   }
