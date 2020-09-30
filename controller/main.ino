@@ -1,9 +1,7 @@
 #include <ArduinoQueue.h>
 #include <AccelStepper.h>
 
-// TODO
-// - Confirm/fail messages for all SET/reset commands?
-// - Potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
+// TODO FUTURE Potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
 
 #define version 1
 
@@ -197,6 +195,7 @@ void start() {
 
 void stop() {
   inSoftStart = false;
+  winder.setAcceleration(winderAcceleration);
   winder.stop();
 }
 
@@ -216,6 +215,7 @@ void executeCommand(command cmd) {
     case SET_TARGET_SPEED:
       if (currentInputValue <= winderMaxAllowedSpeed) {
         targetSpeed = currentInputValue;
+        winder.setAcceleration(winderAcceleration);
         winder.setMaxSpeed(rpmToStepsPerSecond(currentInputValue));
       }
       break;
@@ -364,8 +364,9 @@ void setup()
   threader.setAcceleration(threaderAcceleration);
   threader.setMaxSpeed(threaderMaxSpeed);
 
-  message("READY");
-  message("VERSION", version);
+  message("READY", 0, true);
+  message("VERSION", version, true);
+  Serial.flush();
 }
 
 boolean wasRunning = false;

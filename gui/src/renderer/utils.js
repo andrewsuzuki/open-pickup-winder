@@ -33,7 +33,8 @@ export function openConnection(portPath) {
     // Resolve promise after receiving ready message through listener,
     // then remove listener
     function readyListener(s) {
-      if (s === "READY0") {
+      // Use endsWith in case there's already data in buffer
+      if (s.endsWith("READY0")) {
         resolve({ port, parser });
         parser.removeListener("data", readyListener);
       }

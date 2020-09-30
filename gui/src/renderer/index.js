@@ -46,6 +46,26 @@ const useStore = create((set) => ({
   setJogDistance: (jogDistance) => set(() => ({ jogDistance })),
 }));
 
+// Update controller with current parameters
+function postConnect() {
+  const {
+    winderDirection,
+    targetSpeed,
+    targetWinds,
+    windsPerLayer,
+    bobbinHeight,
+  } = useStore.getState();
+  writeCommand(
+    winderDirection === DIRECTION_CW
+      ? "SET_WINDER_DIRECTION_CW"
+      : "SET_WINDER_DIRECTION_CCW"
+  );
+  writeCommand("T", targetSpeed);
+  writeCommand("SET_TARGET_WINDS", targetWinds);
+  writeCommand("SET_WINDS_PER_LAYER", windsPerLayer);
+  writeCommand("SET_BOBBIN_HEIGHT", bobbinHeight);
+}
+
 function handleMessage(message) {
   const matchValue = message.match(/\d/);
   const matchValueIndex = matchValue && matchValue.index;
@@ -54,11 +74,16 @@ function handleMessage(message) {
     : message;
   const valueMaybe = matchValueIndex ? message.substr(matchValueIndex) : null;
 
+  // Handle possibly-garbage READY (data already in output buffer)
+  if (command.endsWith("READY")) {
+    console.log("ready");
+    postConnect(); // Possibly again after initial connection
+    return;
+  }
+
   switch (command) {
-    case "READY":
-      console.log("ready");
-      // noop
-      break;
+    // case "READY": // handled above
+    //   break;
     case "VERSION":
       console.log("version", valueMaybe);
       // noop
@@ -138,14 +163,15 @@ function jog(command, sendJogDistance = true) {
   writeCommand(command, sendJogDistance ? jogDistance : null);
 }
 
-// TODO ok if no connection (after initial sync is set up)
 function syncParameter(parameter, commandOrCommandValueFn) {
   return useStore.subscribe(
-    (v) =>
-      typeof commandOrCommandValueFn === "function"
+    ([v, connection]) =>
+      connection &&
+      (typeof commandOrCommandValueFn === "function"
         ? writeCommand(...commandOrCommandValueFn(v))
-        : writeCommand(commandOrCommandValueFn, v),
-    (state) => state[parameter]
+        : writeCommand(commandOrCommandValueFn, v)),
+    (state) => [state[parameter], state.connection],
+    shallow
   );
 }
 
@@ -180,15 +206,13 @@ function disconnect() {
   });
 }
 
-// TODO disconnect if received another READY0 (reset button pressed)?
-
 function connect(portPath) {
   openConnection(portPath)
     .then((connection) => {
-      connection.port.on("close", () => disconnect()); // possibly already called
+      connection.port.on("close", disconnect); // possibly already called
       connection.parser.on("data", handleMessage);
       useStore.setState({ connection });
-      // TODO update controller with all parameters
+      postConnect();
     })
     .catch((err) => {
       disconnect();
