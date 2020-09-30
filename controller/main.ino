@@ -2,7 +2,6 @@
 #include <AccelStepper.h>
 
 // TODO
-// - Either implement acceleration value for stops, or simply set acceleration higher if implemented slow starts are sufficient
 // - Confirm/fail messages for all SET/reset commands?
 // - Potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
 
@@ -19,15 +18,17 @@
 #define maxCommandLength 40
 
 #define winderStepsPerRevolution 200
-#define winderAcceleration 500
+#define winderAcceleration 1500
 #define winderMaxAllowedSpeed 1200
 
-#define softStartSpeed 100
-#define softStartTime 3000000
+#define softStartAcceleration 100
+#define softStartSpeed 60
+#define softStartTime 2500000
 
 #define threaderStepsPerMillimeter 80
 #define threaderAcceleration 3000
-#define threaderMaxSpeed 300
+// (max speed in steps/second)
+#define threaderMaxSpeed 1000
 #define threaderTravel 130
 #define threaderBackOff 15
 
@@ -53,7 +54,7 @@ typedef enum {
 typedef enum { LEFT, RIGHT } direction;
 
 // Global variables
-ArduinoQueue<char> printOutQueue(100);
+ArduinoQueue<char> printOutQueue(300);
 int currentInputValue = 0;
 direction winderDirection = RIGHT; // RIGHT = CW, LEFT = CCW
 boolean winderEnabled = false;
@@ -173,6 +174,8 @@ void start() {
   threader.moveTo(deriveThreaderPosition());
   threader.runToPosition();
 
+  inSoftStart = false;
+  winder.setAcceleration(winderAcceleration);
   winder.setMaxSpeed(rpmToStepsPerSecond(targetSpeed));
 
   // Cold start?
@@ -183,6 +186,7 @@ void start() {
     // Set to actual targetSpeed later after softStartTime in loop.
     if (targetSpeed > softStartSpeed) {
       inSoftStart = true;
+      winder.setAcceleration(softStartAcceleration);
       winder.setMaxSpeed(rpmToStepsPerSecond(softStartSpeed));
     }
   }
@@ -192,6 +196,7 @@ void start() {
 }
 
 void stop() {
+  inSoftStart = false;
   winder.stop();
 }
 
@@ -258,6 +263,8 @@ void executeCommand(command cmd) {
         threader.moveTo(threaderLeftLimit);
         threader.runToPosition();
         message("JOG_DONE", 0, true);
+      } else {
+        message("JOGGING_FAILURE", 0, true);
       }
       break;
     case JOG_THREADER_RIGHT:
@@ -265,6 +272,8 @@ void executeCommand(command cmd) {
         threader.move(threaderStepsPerMillimeter * currentInputValue);
         threader.runToPosition();
         message("JOG_DONE", 0, true);
+      } else {
+        message("JOGGING_FAILURE", 0, true);
       }
       break;
     case JOG_THREADER_LEFT:
@@ -272,6 +281,8 @@ void executeCommand(command cmd) {
         threader.move(-1 * threaderStepsPerMillimeter * currentInputValue);
         threader.runToPosition();
         message("JOG_DONE", 0, true);
+      } else {
+        message("JOGGING_FAILURE", 0, true);
       }
       break;
     case HOME_THREADER:
@@ -301,7 +312,7 @@ command parseCommand(String cmdString) {
   if (cmdString == "SET_THREADER_LEFT_LIMIT") return SET_THREADER_LEFT_LIMIT;
   if (cmdString == "JOG_THREADER_TO_LEFT_LIMIT") return JOG_THREADER_TO_LEFT_LIMIT;
   if (cmdString == "JOG_THREADER_LEFT") return JOG_THREADER_LEFT;
-  if (cmdString == "JOG_THREADER_LEFT") return JOG_THREADER_LEFT;
+  if (cmdString == "JOG_THREADER_RIGHT") return JOG_THREADER_RIGHT;
   if (cmdString == "HOME_THREADER") return HOME_THREADER;
   return NONE;
 }
@@ -394,6 +405,7 @@ void loop()
   // If soft start, check if it's time to ramp up to actual targetSpeed
   if (isRunning && inSoftStart && (coldStartTime + softStartTime) < micros()) {
     inSoftStart = false;
+    winder.setAcceleration(winderAcceleration);
     winder.setMaxSpeed(rpmToStepsPerSecond(targetSpeed));
   }
 
@@ -402,9 +414,11 @@ void loop()
   if (isRunning) {
     // Sync wind counter
     if (updateWinds()) {
-      // Updated
       message("W", winds);
-      // Also send actual speed
+    }
+
+    // Send actual speed every 50 steps
+    if (winder.currentPosition() % 50 == 0) {
       message("A", stepsPerSecondToRpm(winder.speed()));
     }
 

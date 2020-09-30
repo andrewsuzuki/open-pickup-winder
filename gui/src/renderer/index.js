@@ -6,9 +6,9 @@ import SerialPort from "serialport";
 
 import "./styles.css";
 
-// TODO jogging status (disable)
 // TODO allow float, or long / 1000
-// TODO targetSpeed < 1200, else?
+// TODO ensure targetSpeed < 1200, else?
+// TODO CSS framework, make pretty
 
 import { portCouldBePickupWinder, useInterval, openConnection } from "./utils";
 
@@ -22,6 +22,8 @@ const useStore = create((set) => ({
 
   // Status
   homed: false,
+  homing: false,
+  jogging: false,
   running: false,
   winds: 0,
   speed: 0,
@@ -33,7 +35,7 @@ const useStore = create((set) => ({
   targetWinds: 0,
   windsPerLayer: 0,
   bobbinHeight: 0,
-  jogDistance: 0, // client only
+  jogDistance: 10, // client only
 
   setAvailablePorts: (availablePorts) => set(() => ({ availablePorts })),
   setWinderDirection: (winderDirection) => set(() => ({ winderDirection })),
@@ -66,11 +68,11 @@ function handleMessage(message) {
       // noop
       break;
     case "HOMED":
-      useStore.setState({ homed: true });
+      useStore.setState({ homed: true, homing: false });
       break;
     case "HOMING_FAILURE":
-      useStore.setState({ homed: false });
-      alert("Homing failed");
+      useStore.setState({ homed: false, homing: false });
+      alert("homing fail");
       break;
     case "WINDS_RESET":
       useStore.setState({ winds: 0 });
@@ -80,7 +82,11 @@ function handleMessage(message) {
       break;
     case "JOG_DONE":
       console.log("jog done");
-      // noop
+      useStore.setState({ jogging: false });
+      break;
+    case "JOGGING_FAILURE":
+      console.log("jog fail");
+      useStore.setState({ jogging: false });
       break;
     case "STARTED":
       useStore.setState({ running: true });
@@ -97,20 +103,42 @@ function handleMessage(message) {
     case "UNRECOGNIZED":
       throw new Error("Controller didn't recognize command");
     default:
-      console.log(command);
-      throw new Error("Unrecognized message from controller");
+      throw new Error(`Unrecognized message from controller: ${message}`);
   }
+}
+
+function getConnection() {
+  const { connection } = useStore.getState();
+  if (!connection) {
+    throw new Error("No connection");
+  }
+  return connection;
 }
 
 function writeCommand(command, valueMaybe = null) {
-  const { connection } = useStore.getState();
-  if (connection) {
-    connection.port.write(`${command}${valueMaybe || ""}\n`); // no callback
-  } else {
-    throw new Error("Tried to write out command without connection");
-  }
+  const connection = getConnection();
+  connection.port.write(`${command}${valueMaybe || ""}\n`); // no callback
 }
 
+function home() {
+  const { homing } = useStore.getState();
+  if (homing) {
+    throw new Error("Already homing");
+  }
+  useStore.setState({ homed: false, homing: true });
+  writeCommand("HOME_THREADER");
+}
+
+function jog(command, sendJogDistance = true) {
+  const { jogging, jogDistance } = useStore.getState();
+  if (jogging) {
+    throw new Error("Already jogging");
+  }
+  useStore.setState({ jogging: true });
+  writeCommand(command, sendJogDistance ? jogDistance : null);
+}
+
+// TODO ok if no connection (after initial sync is set up)
 function syncParameter(parameter, commandOrCommandValueFn) {
   return useStore.subscribe(
     (v) =>
@@ -130,9 +158,8 @@ syncParameter("targetWinds", "SET_TARGET_WINDS");
 syncParameter("windsPerLayer", "SET_WINDS_PER_LAYER");
 syncParameter("bobbinHeight", "SET_BOBBIN_HEIGHT");
 
-// TODO reset homed, running, winds, speed, threaderLeftLimit
 function disconnect() {
-  const connection = useStore.getState().connection;
+  const { connection } = useStore.getState();
   if (connection && connection.port && connection.port.isOpen) {
     connection.port.close(); // NOTE didn't supply callback
   }
@@ -140,9 +167,20 @@ function disconnect() {
     useStore.setState({ connection: null });
     alert("Disconnected");
   }
+
+  // Reset status state
+  useStore.setState({
+    homed: false,
+    homing: false,
+    jogging: false,
+    running: false,
+    winds: 0,
+    speed: 0,
+    threaderLeftLimit: 0,
+  });
 }
 
-// TODO disconnect if received another READY0 (reset button pressed)
+// TODO disconnect if received another READY0 (reset button pressed)?
 
 function connect(portPath) {
   openConnection(portPath)
@@ -214,10 +252,12 @@ function Parameter({
   getterKey,
   setterKey,
   allowWhenRunning = false,
+  allowWhenHomingOrJogging = false,
   allowWhenHasWinds = false,
   ...restProps
 }) {
   const running = useStore((store) => store.running);
+  const homingOrJogging = useStore((store) => store.homing || store.jogging);
   const hasWinds = useStore((store) => store.winds > 0);
   const value = useStore((store) => store[getterKey]);
   const setter = useStore((store) => store[setterKey]);
@@ -242,7 +282,9 @@ function Parameter({
       type="text"
       {...restProps}
       disabled={
-        (!allowWhenRunning && running) || (!allowWhenHasWinds && hasWinds)
+        (!allowWhenRunning && running) ||
+        (!allowWhenHomingOrJogging && homingOrJogging) ||
+        (!allowWhenHasWinds && hasWinds)
       }
       onChange={onChange}
       onBlur={onEnterOrBlur}
@@ -284,8 +326,10 @@ function StatusPart({ storeKey, children }) {
 function okToStart(store) {
   return (
     store.connection &&
-    !store.running &&
     store.homed &&
+    !store.homing &&
+    !store.jogging &&
+    !store.running &&
     store.threaderLeftLimit > 0 &&
     store.windsPerLayer > 0 &&
     store.bobbinHeight > 0 &&
@@ -304,26 +348,24 @@ function StartButton() {
 }
 
 function StopButton() {
-  const running = useStore((store) => store.running);
+  const ok = useStore(
+    (store) =>
+      store.connection && store.running && !store.jogging && !store.homing
+  );
   return (
-    <button disabled={!running} onClick={() => writeCommand("S")}>
+    <button disabled={!ok} onClick={() => writeCommand("S")}>
       Stop
     </button>
   );
 }
 
-function ResetWindsButton() {
-  const running = useStore((store) => store.running);
-  return (
-    <button disabled={running} onClick={() => writeCommand("RESET_WINDS")}>
-      Reset Wind Counter
-    </button>
+function BasicControlButton({ requireHomed = false, ...restProps }) {
+  const ok = useStore(
+    (store) =>
+      store.connection && !store.running && !store.jogging && !store.homing
   );
-}
-
-function BasicControlButton(props) {
-  const ok = useStore((store) => store.connection && !store.running);
-  return <button disabled={!ok} {...props} />;
+  const homed = useStore((store) => store.homed);
+  return <button disabled={!ok || (requireHomed && !homed)} {...restProps} />;
 }
 
 function ControlPage() {
@@ -379,7 +421,9 @@ function ControlPage() {
           id="target-speed"
           getterKey="targetSpeed"
           setterKey="setTargetSpeed"
-          allowWhenRunning
+          // BUG Should be able to set while running. Currently works
+          // ok when setting a higher value, but not a lower value.
+          // allowWhenRunning
           allowWhenHasWinds
         />
       </div>
@@ -389,25 +433,33 @@ function ControlPage() {
       </div>
       <StartButton />
       <StopButton />
-      <ResetWindsButton />
-      <h3>Threader</h3>
-      <BasicControlButton onClick={() => writeCommand("HOME_THREADER")}>
-        Home
+      <BasicControlButton onClick={() => writeCommand("RESET_WINDS")}>
+        Reset Winds
       </BasicControlButton>
+      <h3>Threader</h3>
+      <BasicControlButton onClick={home}>Home</BasicControlButton>
       <BasicControlButton
+        requireHomed
         onClick={() => writeCommand("SET_THREADER_LEFT_LIMIT")}
       >
         Set Threader Left Limit
       </BasicControlButton>
 
       <BasicControlButton
-        onClick={() => writeCommand("JOG_THREADER_TO_LEFT_LIMIT")}
+        requireHomed
+        onClick={() => jog("JOG_THREADER_TO_LEFT_LIMIT", false)}
       >
         Jog to Left Limit
       </BasicControlButton>
-      {/* TODO */}
-      <BasicControlButton>Jog Left</BasicControlButton>
-      <BasicControlButton>Jog Right</BasicControlButton>
+      <BasicControlButton requireHomed onClick={() => jog("JOG_THREADER_LEFT")}>
+        Jog Left
+      </BasicControlButton>
+      <BasicControlButton
+        requireHomed
+        onClick={() => jog("JOG_THREADER_RIGHT")}
+      >
+        Jog Right
+      </BasicControlButton>
       <div>
         <label htmlFor="jog-distance">Jog Distance (mm)</label>
         <Parameter
