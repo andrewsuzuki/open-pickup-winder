@@ -8,6 +8,7 @@ import "./styles.css";
 
 // TODO jogging status (disable)
 // TODO allow float, or long / 1000
+// TODO targetSpeed < 1200, else?
 
 import { portCouldBePickupWinder, useInterval, openConnection } from "./utils";
 

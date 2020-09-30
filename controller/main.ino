@@ -2,8 +2,7 @@
 #include <AccelStepper.h>
 
 // TODO
-// - Different acceleration value for stops
-// - Slower ramp up at cold start?
+// - Either implement acceleration value for stops, or simply set acceleration higher if implemented slow starts are sufficient
 // - Confirm/fail messages for all SET/reset commands?
 // - Potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
 
@@ -22,6 +21,9 @@
 #define winderStepsPerRevolution 200
 #define winderAcceleration 500
 #define winderMaxAllowedSpeed 1200
+
+#define softStartSpeed 100
+#define softStartTime 3000000
 
 #define threaderStepsPerMillimeter 80
 #define threaderAcceleration 3000
@@ -60,7 +62,10 @@ unsigned int targetWinds = 0;
 unsigned int windsPerLayer = 0;
 unsigned int bobbinHeight = 0;
 unsigned long threaderLeftLimit = 0;
+unsigned long targetSpeed = 0;
 boolean homed = false;
+unsigned long coldStartTime = 0;
+boolean inSoftStart = false;
 
 AccelStepper winder(1, winderStepPin, winderDirPin);
 AccelStepper threader(1, threaderStepPin, threaderDirPin);
@@ -168,8 +173,26 @@ void start() {
   threader.moveTo(deriveThreaderPosition());
   threader.runToPosition();
 
+  winder.setMaxSpeed(rpmToStepsPerSecond(targetSpeed));
+
+  // Cold start?
+  if (!winder.isRunning()) {
+    coldStartTime = micros();
+
+    // Temporarily use softStartSpeed if applicable.
+    // Set to actual targetSpeed later after softStartTime in loop.
+    if (targetSpeed > softStartSpeed) {
+      inSoftStart = true;
+      winder.setMaxSpeed(rpmToStepsPerSecond(softStartSpeed));
+    }
+  }
+
   int directionMultiplier = winderDirection == RIGHT ? 1 : -1;
   winder.moveTo(directionMultiplier * windsToSteps(targetWinds));
+}
+
+void stop() {
+  winder.stop();
 }
 
 void executeCommand(command cmd) {
@@ -183,10 +206,11 @@ void executeCommand(command cmd) {
       }
       break;
     case STOP:
-      winder.stop();
+      stop();
       break;
     case SET_TARGET_SPEED:
       if (currentInputValue <= winderMaxAllowedSpeed) {
+        targetSpeed = currentInputValue;
         winder.setMaxSpeed(rpmToStepsPerSecond(currentInputValue));
       }
       break;
@@ -365,6 +389,12 @@ void loop()
   if (isRunning != winderEnabled) {
     digitalWrite(winderEnablePin, isRunning ? HIGH : LOW);
     winderEnabled = isRunning;
+  }
+
+  // If soft start, check if it's time to ramp up to actual targetSpeed
+  if (isRunning && inSoftStart && (coldStartTime + softStartTime) < micros()) {
+    inSoftStart = false;
+    winder.setMaxSpeed(rpmToStepsPerSecond(targetSpeed));
   }
 
   winder.run();
