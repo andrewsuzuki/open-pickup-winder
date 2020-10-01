@@ -3,17 +3,19 @@ import ReactDOM from "react-dom";
 import create from "zustand";
 import shallow from "zustand/shallow";
 import SerialPort from "serialport";
+import classNames from "classnames";
 
 import "./styles.scss";
 
-// TODO ensure targetSpeed < 1200, most are below int/long limit, ?
-// TODO parameter allow floats for bobbinHeight and jogDistance
 // TODO threader position readout
 
 import { portCouldBePickupWinder, useInterval, openConnection } from "./utils";
 
 const DIRECTION_CW = "CW";
 const DIRECTION_CCW = "CCW";
+const UINT_MAX = 65535;
+const BOBBIN_HEIGHT_MAX = 130;
+const TARGET_SPEED_MAX = 1200;
 
 const useStore = create((set) => ({
   // Connnection
@@ -308,17 +310,15 @@ function Connection() {
   );
 }
 
-function coercePositiveInt(v) {
-  const int = parseInt(v, 10);
-  return !int || int < 0 ? 0 : int;
-}
-
 function Parameter({
+  isFloat = false,
   getterKey,
   setterKey,
   allowWhenRunning = false,
   allowWhenHomingOrJogging = false,
   allowWhenHasWinds = false,
+  className = null,
+  max = null,
   ...restProps
 }) {
   const running = useStore((store) => store.running);
@@ -329,23 +329,28 @@ function Parameter({
 
   const [temp, setTemp] = useState(`${value}`);
 
+  const isValid = max === null ? true : parseFloat(temp) <= max;
+
   useEffect(() => {
     setTemp(`${value}`);
   }, [value]);
 
   const onChange = (e) => {
     const v = e.target.value;
-    if (v.match(/^\d+$/) || v === "") {
+    if (v.match(isFloat ? /^\d+\.?\d{0,2}$/ : /^\d+$/) || v === "") {
       setTemp(e.target.value);
     }
   };
 
-  const onEnterOrBlur = () => setter(coercePositiveInt(temp));
+  const onEnterOrBlur = () => {
+    setter(isValid ? parseFloat(temp) : 0);
+  };
 
   return (
     <input
       type="text"
       {...restProps}
+      className={classNames(className, !isValid && "is-invalid")}
       disabled={
         (!allowWhenRunning && running) ||
         (!allowWhenHomingOrJogging && homingOrJogging) ||
@@ -555,14 +560,17 @@ function ControlPage() {
             label="Target Winds"
             getterKey="targetWinds"
             setterKey="setTargetWinds"
+            max={UINT_MAX}
           />
           <div className="row">
             <div className="col">
               <ParameterField
+                isFloat
                 id="bobbin-height"
                 label="Bobbin Height (mm)"
                 getterKey="bobbinHeight"
                 setterKey="setBobbinHeight"
+                max={BOBBIN_HEIGHT_MAX}
               />
             </div>
             <div className="col">
@@ -571,6 +579,7 @@ function ControlPage() {
                 label="Winds per Layer"
                 getterKey="windsPerLayer"
                 setterKey="setWindsPerLayer"
+                max={UINT_MAX}
               />
             </div>
           </div>
@@ -594,6 +603,7 @@ function ControlPage() {
                 // ok when setting a higher value, but not a lower value.
                 // allowWhenRunning
                 allowWhenHasWinds
+                max={TARGET_SPEED_MAX}
               />
             </div>
             <div className="col">
@@ -648,6 +658,7 @@ function ControlPage() {
               Right
             </BasicControlButton>
             <Parameter
+              isFloat
               id="jog-distance"
               className="form-control"
               getterKey="jogDistance"
