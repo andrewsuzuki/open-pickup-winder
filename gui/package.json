@@ -8,9 +8,11 @@
     "compile": "electron-webpack",
     "dist": "yarn compile && electron-builder",
     "dist:dir": "yarn dist --dir -c.compression=store -c.mac.identity=null",
-    "postinstall": "electron-rebuild --force"
+    "postinstall": "electron-rebuild --force",
+    "postuninstall": "electron-rebuild --force"
   },
   "dependencies": {
+    "bootstrap": "^5.0.0-alpha2",
     "electron-rebuild": "^2.0.3",
     "react": "^16.13.1",
     "react-dom": "^16.13.1",
@@ -23,6 +25,8 @@
     "electron": "8.2.0",
     "electron-builder": "^22.4.1",
     "electron-webpack": "^2.8.2",
+    "node-sass": "^4.14.1",
+    "sass-loader": "^10.0.2",
     "webpack": "~4.42.1"
   },
   "electronWebpack": {

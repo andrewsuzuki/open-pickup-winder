@@ -4,11 +4,11 @@ import create from "zustand";
 import shallow from "zustand/shallow";
 import SerialPort from "serialport";
 
-import "./styles.css";
+import "./styles.scss";
 
 // TODO allow float, or long / 1000
 // TODO ensure targetSpeed < 1200, else?
-// TODO CSS framework, make pretty
+// TODO protect against jogs past limits
 
 import { portCouldBePickupWinder, useInterval, openConnection } from "./utils";
 
@@ -122,7 +122,7 @@ function handleMessage(message) {
     case "W": // (winds)
       useStore.setState({ winds: parseInt(valueMaybe, 10) });
       break;
-    case "A": // (actual speed)
+    case "A": // (actual/current speed)
       useStore.setState({ speed: parseInt(valueMaybe, 10) });
       break;
     case "UNRECOGNIZED":
@@ -242,23 +242,34 @@ function Connection() {
         <p>No pickup winder found.</p>
       ) : (
         <>
-          <label htmlFor="select-port">
-            <select id="select-port" disabled={isConnected}>
-              {availablePorts.map((ap) => (
-                <option key={ap.path}>{ap.path}</option>
-              ))}
-            </select>
-          </label>
+          <select
+            id="select-port"
+            disabled={isConnected}
+            className="form-select d-inline-block"
+          >
+            {availablePorts.map((ap) => (
+              <option key={ap.path}>{ap.path}</option>
+            ))}
+          </select>{" "}
           <button
             onClick={() => connect(availablePorts[0].path)}
             disabled={isConnected}
+            className="btn btn-primary"
           >
             Connect
-          </button>
-          <button onClick={() => disconnect()} disabled={!isConnected}>
+          </button>{" "}
+          <button
+            onClick={() => disconnect()}
+            disabled={!isConnected}
+            className="btn btn-light"
+          >
             Disconnect
-          </button>
-          <button onClick={() => writeCommand("P")} disabled={!isConnected}>
+          </button>{" "}
+          <button
+            onClick={() => writeCommand("P")}
+            disabled={!isConnected}
+            className="btn btn-light"
+          >
             Ping
           </button>
         </>
@@ -312,9 +323,24 @@ function Parameter({
       }
       onChange={onChange}
       onBlur={onEnterOrBlur}
-      onKeyUp={(e) => e.key === "Enter" && onEnterOrBlur()}
+      onKeyUp={(e) => {
+        if (e.key === "Enter") {
+          onEnterOrBlur();
+        }
+      }}
       value={temp}
     />
+  );
+}
+
+function ParameterField({ id, label, ...restProps }) {
+  return (
+    <div className="mb-3">
+      <label htmlFor={id} className="form-label">
+        {label}
+      </label>
+      <Parameter id={id} className="form-control" {...restProps} />
+    </div>
   );
 }
 
@@ -342,9 +368,14 @@ function WinderDirection({ ...restProps }) {
   );
 }
 
-function StatusPart({ storeKey, children }) {
+function StatusPart({ storeKey, label, children }) {
   const value = useStore((store) => store[storeKey]);
-  return <>{children(value)}</>;
+  return (
+    <div className="mb-2">
+      <span>{label}</span>
+      <div>{children(value)}</div>
+    </div>
+  );
 }
 
 function okToStart(store) {
@@ -365,7 +396,11 @@ function okToStart(store) {
 function StartButton() {
   const ok = useStore((store) => okToStart(store));
   return (
-    <button disabled={!ok} onClick={() => writeCommand("START")}>
+    <button
+      disabled={!ok}
+      onClick={() => writeCommand("START")}
+      className="btn btn-success"
+    >
       Start
     </button>
   );
@@ -377,123 +412,210 @@ function StopButton() {
       store.connection && store.running && !store.jogging && !store.homing
   );
   return (
-    <button disabled={!ok} onClick={() => writeCommand("S")}>
+    <button
+      disabled={!ok}
+      onClick={() => writeCommand("S")}
+      className="btn btn-danger"
+    >
       Stop
     </button>
   );
 }
 
-function BasicControlButton({ requireHomed = false, ...restProps }) {
+function BasicControlButton({
+  requireHomed = false,
+  requireThreaderLeftLimit = false,
+  brand = "light",
+  ...restProps
+}) {
   const ok = useStore(
     (store) =>
       store.connection && !store.running && !store.jogging && !store.homing
   );
   const homed = useStore((store) => store.homed);
-  return <button disabled={!ok || (requireHomed && !homed)} {...restProps} />;
+  const threaderLeftLimit = useStore((store) => store.threaderLeftLimit);
+  return (
+    <button
+      disabled={
+        !ok ||
+        (requireHomed && !homed) ||
+        (requireThreaderLeftLimit && threaderLeftLimit === 0)
+      }
+      className={`btn btn-${brand}`}
+      {...restProps}
+    />
+  );
+}
+
+function StateBadge() {
+  const { connection, homing, jogging, running } = useStore(
+    ({ connection, homing, jogging, running }) => ({
+      connection,
+      homing,
+      jogging,
+      running,
+    }),
+    shallow
+  );
+
+  return homing ? (
+    <span className="badge bg-primary">Homing</span>
+  ) : jogging ? (
+    <span className="badge bg-primary">Jogging</span>
+  ) : running ? (
+    <span className="badge bg-success">Running</span>
+  ) : connection ? (
+    <span className="badge bg-secondary">Idle</span>
+  ) : (
+    <span className="badge bg-light text-danger">Disconnected</span>
+  );
 }
 
 function ControlPage() {
   return (
-    <div>
-      <h2>Status</h2>
-      <StatusPart storeKey="homed">
-        {(homed) => <p>Homed? {homed ? "Yes" : "No"}</p>}
-      </StatusPart>
-      <StatusPart storeKey="running">
-        {(running) => <p>Running? {running ? "Yes" : "No"}</p>}
-      </StatusPart>
-      <StatusPart storeKey="winds">
-        {(winds) => <p>Winds: {winds}</p>}
-      </StatusPart>
-      <StatusPart storeKey="speed">
-        {(speed) => <p>Actual Speed: {speed}rpm</p>}
-      </StatusPart>
-      <StatusPart storeKey="threaderLeftLimit">
-        {(threaderLeftLimit) => (
-          <p>Threader Left Limit: {threaderLeftLimit}mm</p>
-        )}
-      </StatusPart>
-      <h2>Pickup</h2>
-      <div>
-        <label htmlFor="target-winds">Target Winds</label>
-        <Parameter
-          id="target-winds"
-          getterKey="targetWinds"
-          setterKey="setTargetWinds"
-        />
+    <div className="row">
+      <div className="col">
+        <div className="py-1">
+          <h2>
+            Status <StateBadge />
+          </h2>
+          <StatusPart storeKey="winds" label="Winds">
+            {(winds) => winds}
+          </StatusPart>
+          <StatusPart storeKey="speed" label="Speed">
+            {(speed) => `${speed}rpm`}
+          </StatusPart>
+          <StatusPart storeKey="homed" label="Homed">
+            {(homed) =>
+              homed ? (
+                <span className="text-success">Yes</span>
+              ) : (
+                <span className="text-danger">No</span>
+              )
+            }
+          </StatusPart>
+          <StatusPart storeKey="threaderLeftLimit" label="Threader Left Limit">
+            {(threaderLeftLimit) =>
+              threaderLeftLimit === 0 ? (
+                <span className="text-danger">Not set</span>
+              ) : (
+                `${threaderLeftLimit}mm`
+              )
+            }
+          </StatusPart>
+        </div>
+        <div className="py-1">
+          <h2>Pickup</h2>
+          <ParameterField
+            id="target-winds"
+            label="Target Winds"
+            getterKey="targetWinds"
+            setterKey="setTargetWinds"
+          />
+          <div className="row">
+            <div className="col">
+              <ParameterField
+                id="bobbin-height"
+                label="Bobbin Height (mm)"
+                getterKey="bobbinHeight"
+                setterKey="setBobbinHeight"
+              />
+            </div>
+            <div className="col">
+              <ParameterField
+                id="winds-per-layer"
+                label="Winds per Layer"
+                getterKey="windsPerLayer"
+                setterKey="setWindsPerLayer"
+              />
+            </div>
+          </div>
+        </div>
       </div>
-      <div>
-        <label htmlFor="bobbin-height">Bobbin Height (mm)</label>
-        <Parameter
-          id="bobbin-height"
-          getterKey="bobbinHeight"
-          setterKey="setBobbinHeight"
-        />
+      <div className="col">
+        <div className="py-1">
+          <h2>Connection</h2>
+          <Connection />
+        </div>
+        <div className="py-1">
+          <h2>Controls</h2>
+          <div className="row">
+            <div className="col">
+              <ParameterField
+                id="target-speed"
+                label="Target Speed"
+                getterKey="targetSpeed"
+                setterKey="setTargetSpeed"
+                // BUG Should be able to set while running. Currently works
+                // ok when setting a higher value, but not a lower value.
+                // allowWhenRunning
+                allowWhenHasWinds
+              />
+            </div>
+            <div className="col">
+              <div className="mb-3">
+                <label htmlFor="winder-direction" className="form-label">
+                  Winder Direction
+                </label>
+                <WinderDirection
+                  id="winder-direction"
+                  className="form-select"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="mb-3">
+            <StartButton /> <StopButton />{" "}
+            <BasicControlButton onClick={() => writeCommand("RESET_WINDS")}>
+              Reset Winds
+            </BasicControlButton>
+          </div>
+        </div>
+        <div className="py-1">
+          <h3>Threader</h3>
+          <div className="mb-3">
+            <BasicControlButton onClick={home}>Home</BasicControlButton>{" "}
+            <BasicControlButton
+              requireHomed
+              onClick={() => writeCommand("SET_THREADER_LEFT_LIMIT")}
+            >
+              Set Threader Left Limit
+            </BasicControlButton>
+          </div>
+          <label htmlFor="jog-distance" className="form-label">
+            Jog (mm)
+          </label>
+          <div className="input-group mb-3">
+            <BasicControlButton
+              requireHomed
+              onClick={() => jog("JOG_THREADER_LEFT")}
+            >
+              Left
+            </BasicControlButton>{" "}
+            <BasicControlButton
+              requireHomed
+              onClick={() => jog("JOG_THREADER_RIGHT")}
+            >
+              Right
+            </BasicControlButton>
+            <Parameter
+              id="jog-distance"
+              className="form-control"
+              getterKey="jogDistance"
+              setterKey="setJogDistance"
+            />
+          </div>
+          <div className="mb-3">
+            <BasicControlButton
+              requireHomed
+              requireThreaderLeftLimit
+              onClick={() => jog("JOG_THREADER_TO_LEFT_LIMIT", false)}
+            >
+              Jog to Left Limit
+            </BasicControlButton>
+          </div>
+        </div>
       </div>
-      <div>
-        <label htmlFor="winds-per-layer">Winds per Layer</label>
-        <Parameter
-          id="winds-per-layer"
-          getterKey="windsPerLayer"
-          setterKey="setWindsPerLayer"
-        />
-      </div>
-      <h2>Controls</h2>
-      <div>
-        <label htmlFor="target-speed">Target Speed</label>
-        <Parameter
-          id="target-speed"
-          getterKey="targetSpeed"
-          setterKey="setTargetSpeed"
-          // BUG Should be able to set while running. Currently works
-          // ok when setting a higher value, but not a lower value.
-          // allowWhenRunning
-          allowWhenHasWinds
-        />
-      </div>
-      <div>
-        <label htmlFor="winder-direction">Winder Direction</label>
-        <WinderDirection id="winder-direction" />
-      </div>
-      <StartButton />
-      <StopButton />
-      <BasicControlButton onClick={() => writeCommand("RESET_WINDS")}>
-        Reset Winds
-      </BasicControlButton>
-      <h3>Threader</h3>
-      <BasicControlButton onClick={home}>Home</BasicControlButton>
-      <BasicControlButton
-        requireHomed
-        onClick={() => writeCommand("SET_THREADER_LEFT_LIMIT")}
-      >
-        Set Threader Left Limit
-      </BasicControlButton>
-
-      <BasicControlButton
-        requireHomed
-        onClick={() => jog("JOG_THREADER_TO_LEFT_LIMIT", false)}
-      >
-        Jog to Left Limit
-      </BasicControlButton>
-      <BasicControlButton requireHomed onClick={() => jog("JOG_THREADER_LEFT")}>
-        Jog Left
-      </BasicControlButton>
-      <BasicControlButton
-        requireHomed
-        onClick={() => jog("JOG_THREADER_RIGHT")}
-      >
-        Jog Right
-      </BasicControlButton>
-      <div>
-        <label htmlFor="jog-distance">Jog Distance (mm)</label>
-        <Parameter
-          id="jog-distance"
-          getterKey="jogDistance"
-          setterKey="setJogDistance"
-        />
-      </div>
-      <h2>Connection</h2>
-      <Connection />
     </div>
   );
 }
@@ -501,8 +623,16 @@ function ControlPage() {
 function Root() {
   return (
     <div>
-      <h1>Open Pickup Winder</h1>
-      <ControlPage />
+      <nav className="navbar navbar-light bg-light">
+        <div className="container-fluid">
+          <span className="navbar-brand mb-0 h1">Open Pickup Winder</span>
+        </div>
+      </nav>
+      <main>
+        <section className="container py-3">
+          <ControlPage />
+        </section>
+      </main>
     </div>
   );
 }

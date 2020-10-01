@@ -1,6 +1,7 @@
 #include <ArduinoQueue.h>
 #include <AccelStepper.h>
 
+// TODO protect against jogs past limits
 // TODO FUTURE Potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
 
 #define version 1
