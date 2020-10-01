@@ -7,8 +7,7 @@ import SerialPort from "serialport";
 import "./styles.scss";
 
 // TODO allow float, or long / 1000
-// TODO ensure targetSpeed < 1200, else?
-// TODO protect against jogs past limits
+// TODO ensure targetSpeed < 1200, most are below int/long limit, ?
 
 import { portCouldBePickupWinder, useInterval, openConnection } from "./utils";
 
@@ -21,6 +20,7 @@ const useStore = create((set) => ({
   availablePorts: [],
 
   // Status
+  connecting: false,
   homed: false,
   homing: false,
   jogging: false,
@@ -37,6 +37,7 @@ const useStore = create((set) => ({
   bobbinHeight: 0,
   jogDistance: 10, // client only
 
+  // Setters
   setAvailablePorts: (availablePorts) => set(() => ({ availablePorts })),
   setWinderDirection: (winderDirection) => set(() => ({ winderDirection })),
   setTargetSpeed: (targetSpeed) => set(() => ({ targetSpeed })),
@@ -97,7 +98,7 @@ function handleMessage(message) {
       break;
     case "HOMING_FAILURE":
       useStore.setState({ homed: false, homing: false });
-      alert("homing fail");
+      alert("Homing failed.");
       break;
     case "WINDS_RESET":
       useStore.setState({ winds: 0 });
@@ -110,8 +111,8 @@ function handleMessage(message) {
       useStore.setState({ jogging: false });
       break;
     case "JOGGING_FAILURE":
-      console.log("jog fail");
       useStore.setState({ jogging: false });
+      alert("Jog failed.");
       break;
     case "STARTED":
       useStore.setState({ running: true });
@@ -189,13 +190,13 @@ function disconnect() {
   if (connection && connection.port && connection.port.isOpen) {
     connection.port.close(); // NOTE didn't supply callback
   }
-  if (connection) {
-    useStore.setState({ connection: null });
-    alert("Disconnected");
-  }
 
-  // Reset status state
   useStore.setState({
+    // Remove connection
+    connection: null,
+
+    // Reset status state
+    connecting: false,
     homed: false,
     homing: false,
     jogging: false,
@@ -207,14 +208,16 @@ function disconnect() {
 }
 
 function connect(portPath) {
+  useStore.setState({ connecting: true });
   openConnection(portPath)
     .then((connection) => {
+      useStore.setState({ connection, connecting: false });
       connection.port.on("close", disconnect); // possibly already called
       connection.parser.on("data", handleMessage);
-      useStore.setState({ connection });
       postConnect();
     })
     .catch((err) => {
+      useStore.setState({ connecting: false });
       disconnect();
       alert(`Could not connect: ${err.message}`);
     });
@@ -230,6 +233,7 @@ function refreshAvailablePorts() {
 function Connection() {
   const connection = useStore((state) => state.connection);
   const availablePorts = useStore((state) => state.availablePorts);
+  const connecting = useStore((state) => state.connecting);
 
   useEffect(refreshAvailablePorts, []);
   useInterval(refreshAvailablePorts, 3000);
@@ -242,36 +246,57 @@ function Connection() {
         <p>No pickup winder found.</p>
       ) : (
         <>
-          <select
-            id="select-port"
-            disabled={isConnected}
-            className="form-select d-inline-block"
-          >
-            {availablePorts.map((ap) => (
-              <option key={ap.path}>{ap.path}</option>
-            ))}
-          </select>{" "}
-          <button
-            onClick={() => connect(availablePorts[0].path)}
-            disabled={isConnected}
-            className="btn btn-primary"
-          >
-            Connect
-          </button>{" "}
-          <button
-            onClick={() => disconnect()}
-            disabled={!isConnected}
-            className="btn btn-light"
-          >
-            Disconnect
-          </button>{" "}
-          <button
-            onClick={() => writeCommand("P")}
-            disabled={!isConnected}
-            className="btn btn-light"
-          >
-            Ping
-          </button>
+          <div className="mb-3">
+            <select
+              id="select-port"
+              disabled={isConnected}
+              className="form-select d-inline-block"
+              // NOTE uncontrolled
+            >
+              {availablePorts.map(({ path }) => (
+                <option key={path} value={path}>
+                  {path}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="mb-3">
+            <button
+              onClick={() => connect(availablePorts[0].path)}
+              disabled={isConnected}
+              className="btn btn-primary"
+            >
+              {isConnected ? (
+                "Connected"
+              ) : connecting ? (
+                <>
+                  <span
+                    className="spinner-border spinner-border-sm"
+                    role="status"
+                    aria-hidden="true"
+                    style={{ verticalAlign: "middle" }}
+                  ></span>{" "}
+                  Connecting...
+                </>
+              ) : (
+                "Connect"
+              )}
+            </button>{" "}
+            <button
+              onClick={() => disconnect()}
+              disabled={!isConnected}
+              className="btn btn-light"
+            >
+              Disconnect
+            </button>{" "}
+            <button
+              onClick={() => writeCommand("P")}
+              disabled={!isConnected}
+              className="btn btn-light"
+            >
+              Ping
+            </button>
+          </div>
         </>
       )}
     </div>
@@ -345,10 +370,17 @@ function ParameterField({ id, label, ...restProps }) {
 }
 
 function WinderDirection({ ...restProps }) {
-  const { connection, running, winderDirection, setWinderDirection } = useStore(
-    ({ connection, running, winderDirection, setWinderDirection }) => ({
+  const {
+    connection,
+    running,
+    winds,
+    winderDirection,
+    setWinderDirection,
+  } = useStore(
+    ({ connection, running, winds, winderDirection, setWinderDirection }) => ({
       connection,
       running,
+      winds,
       winderDirection,
       setWinderDirection,
     }),
@@ -358,12 +390,15 @@ function WinderDirection({ ...restProps }) {
   return (
     <select
       {...restProps}
-      disabled={!(connection && !running)}
+      disabled={!connection || running || winds > 0}
       value={winderDirection}
       onChange={(e) => setWinderDirection(e.target.value)}
     >
-      <option>{DIRECTION_CW}</option>
-      <option>{DIRECTION_CCW}</option>
+      {[DIRECTION_CW, DIRECTION_CCW].map((dir) => (
+        <option key={dir} value={dir}>
+          {dir}
+        </option>
+      ))}
     </select>
   );
 }
@@ -395,13 +430,14 @@ function okToStart(store) {
 
 function StartButton() {
   const ok = useStore((store) => okToStart(store));
+  const running = useStore((store) => store.running);
   return (
     <button
       disabled={!ok}
       onClick={() => writeCommand("START")}
       className="btn btn-success"
     >
-      Start
+      {running ? "Running" : "Start"}
     </button>
   );
 }
@@ -417,7 +453,7 @@ function StopButton() {
       onClick={() => writeCommand("S")}
       className="btn btn-danger"
     >
-      Stop
+      {ok ? "Stop" : "Stopped"}
     </button>
   );
 }
@@ -425,6 +461,7 @@ function StopButton() {
 function BasicControlButton({
   requireHomed = false,
   requireThreaderLeftLimit = false,
+  requireNoWinds = false,
   brand = "light",
   ...restProps
 }) {
@@ -433,13 +470,15 @@ function BasicControlButton({
       store.connection && !store.running && !store.jogging && !store.homing
   );
   const homed = useStore((store) => store.homed);
-  const threaderLeftLimit = useStore((store) => store.threaderLeftLimit);
+  const hasThreaderLeftLimit = useStore((store) => store.threaderLeftLimit > 0);
+  const hasWinds = useStore((store) => store.winds > 0);
   return (
     <button
       disabled={
         !ok ||
         (requireHomed && !homed) ||
-        (requireThreaderLeftLimit && threaderLeftLimit === 0)
+        (requireThreaderLeftLimit && !hasThreaderLeftLimit) ||
+        (requireNoWinds && hasWinds)
       }
       className={`btn btn-${brand}`}
       {...restProps}
@@ -494,7 +533,7 @@ function ControlPage() {
               )
             }
           </StatusPart>
-          <StatusPart storeKey="threaderLeftLimit" label="Threader Left Limit">
+          <StatusPart storeKey="threaderLeftLimit" label="Start Position">
             {(threaderLeftLimit) =>
               threaderLeftLimit === 0 ? (
                 <span className="text-danger">Not set</span>
@@ -574,26 +613,31 @@ function ControlPage() {
         <div className="py-1">
           <h3>Threader</h3>
           <div className="mb-3">
-            <BasicControlButton onClick={home}>Home</BasicControlButton>{" "}
+            <BasicControlButton onClick={home} requireNoWinds>
+              Home
+            </BasicControlButton>{" "}
             <BasicControlButton
               requireHomed
+              requireNoWinds
               onClick={() => writeCommand("SET_THREADER_LEFT_LIMIT")}
             >
-              Set Threader Left Limit
+              Set Start Position
             </BasicControlButton>
           </div>
           <label htmlFor="jog-distance" className="form-label">
-            Jog (mm)
+            Jog
           </label>
           <div className="input-group mb-3">
             <BasicControlButton
               requireHomed
+              requireNoWinds
               onClick={() => jog("JOG_THREADER_LEFT")}
             >
               Left
             </BasicControlButton>{" "}
             <BasicControlButton
               requireHomed
+              requireNoWinds
               onClick={() => jog("JOG_THREADER_RIGHT")}
             >
               Right
@@ -604,14 +648,16 @@ function ControlPage() {
               getterKey="jogDistance"
               setterKey="setJogDistance"
             />
+            <span className="input-group-text">mm</span>
           </div>
           <div className="mb-3">
             <BasicControlButton
               requireHomed
               requireThreaderLeftLimit
+              requireNoWinds
               onClick={() => jog("JOG_THREADER_TO_LEFT_LIMIT", false)}
             >
-              Jog to Left Limit
+              Jog to Start Position
             </BasicControlButton>
           </div>
         </div>

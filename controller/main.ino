@@ -2,7 +2,7 @@
 #include <AccelStepper.h>
 
 // TODO protect against jogs past limits
-// TODO FUTURE Potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
+// TODO FUTURE potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
 
 #define version 1
 
@@ -145,7 +145,7 @@ float rpmToStepsPerSecond(unsigned int rpm) {
 }
 
 unsigned int stepsPerSecondToRpm(float sss) {
-  return sss * 60 / winderStepsPerRevolution; // (floor)
+  return abs(sss) * 60 / winderStepsPerRevolution; // (floor)
 }
 
 // Derive threader step position from winder step position
