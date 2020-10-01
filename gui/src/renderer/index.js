@@ -6,8 +6,9 @@ import SerialPort from "serialport";
 
 import "./styles.scss";
 
-// TODO allow float, or long / 1000
 // TODO ensure targetSpeed < 1200, most are below int/long limit, ?
+// TODO parameter allow floats for bobbinHeight and jogDistance
+// TODO threader position readout
 
 import { portCouldBePickupWinder, useInterval, openConnection } from "./utils";
 
@@ -73,7 +74,9 @@ function handleMessage(message) {
   const command = matchValueIndex
     ? message.substr(0, matchValueIndex)
     : message;
-  const valueMaybe = matchValueIndex ? message.substr(matchValueIndex) : null;
+  const valueMaybe = matchValueIndex
+    ? parseInt(message.substr(matchValueIndex), 10) / 100
+    : null;
 
   // Handle possibly-garbage READY (data already in output buffer)
   if (command.endsWith("READY")) {
@@ -104,7 +107,7 @@ function handleMessage(message) {
       useStore.setState({ winds: 0 });
       break;
     case "THREADER_LEFT_LIMIT":
-      useStore.setState({ threaderLeftLimit: parseFloat(valueMaybe) });
+      useStore.setState({ threaderLeftLimit: valueMaybe });
       break;
     case "JOG_DONE":
       console.log("jog done");
@@ -121,10 +124,10 @@ function handleMessage(message) {
       useStore.setState({ running: false });
       break;
     case "W": // (winds)
-      useStore.setState({ winds: parseInt(valueMaybe, 10) });
+      useStore.setState({ winds: valueMaybe });
       break;
     case "A": // (actual/current speed)
-      useStore.setState({ speed: parseInt(valueMaybe, 10) });
+      useStore.setState({ speed: valueMaybe });
       break;
     case "UNRECOGNIZED":
       throw new Error("Controller didn't recognize command");
@@ -143,7 +146,9 @@ function getConnection() {
 
 function writeCommand(command, valueMaybe = null) {
   const connection = getConnection();
-  connection.port.write(`${command}${valueMaybe || ""}\n`); // no callback
+  connection.port.write(
+    `${command}${valueMaybe ? Math.round(valueMaybe * 100) : ""}\n`
+  ); // no callback
 }
 
 function home() {

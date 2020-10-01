@@ -54,13 +54,13 @@ typedef enum { LEFT, RIGHT } direction;
 
 // Global variables
 ArduinoQueue<char> printOutQueue(300);
-int currentInputValue = 0;
+float currentInputValue = 0;
 direction winderDirection = RIGHT; // RIGHT = CW, LEFT = CCW
 boolean winderEnabled = false;
 unsigned int winds = 0;
 unsigned int targetWinds = 0;
 unsigned int windsPerLayer = 0;
-unsigned int bobbinHeight = 0;
+float bobbinHeight = 0;
 unsigned long threaderLeftLimit = 0;
 unsigned long targetSpeed = 0;
 boolean homed = false;
@@ -89,7 +89,7 @@ void qPrint(String str) {
 }
 
 void message(String type, unsigned long outputValue = 0, boolean immediate = false) {
-  String msg = type + outputValue + "\n";
+  String msg = type + (outputValue * 100) + "\n";
   if (immediate) {
     Serial.print(msg);
   } else {
@@ -98,7 +98,12 @@ void message(String type, unsigned long outputValue = 0, boolean immediate = fal
 }
 
 void messageFloat(String type, float outputValue = 0.0, boolean immediate = false) {
-  String msg = type + outputValue + "\n";
+  if (outputValue < 0) {
+    // Not allowed
+    return;
+  }
+
+  String msg = type + (unsigned long)(outputValue * 100) + "\n";
   if (immediate) {
     Serial.print(msg);
   } else {
@@ -154,7 +159,7 @@ unsigned long deriveThreaderPosition() {
   unsigned long winderStepsPerLayer = winderStepsPerRevolution * windsPerLayer;
   unsigned long winderStepsFromLayerStart = winderDistance % winderStepsPerLayer;
 
-  unsigned long threaderStepsPerLayer = threaderStepsPerMillimeter * bobbinHeight;
+  unsigned long threaderStepsPerLayer = threaderStepsPerMillimeter * bobbinHeight; // (floor)
   unsigned long threaderStepsFromLayerStart = threaderStepsPerLayer * winderStepsFromLayerStart / winderStepsPerLayer; // (floor)
 
   unsigned int layer = winderDistance / winderStepsPerLayer; // (floor)
@@ -329,6 +334,7 @@ void processIncomingByte(const int c) {
     switch (c) {
       case '\n':
         inputLine[inputPos] = 0; // terminating null byte
+        currentInputValue = currentInputValue / 100; // divide by 100
         executeCommand(parseCommand(inputLine));
         // Reset buffer for next time
         inputPos = 0;
