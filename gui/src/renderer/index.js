@@ -1,9 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import ReactDOM from "react-dom";
 import create from "zustand";
 import shallow from "zustand/shallow";
 import SerialPort from "serialport";
 import classNames from "classnames";
+import { useForm, FormProvider, useFormContext } from "react-hook-form";
+import { yupResolver } from "@hookform/resolvers";
+import * as yup from "yup";
+import get from "lodash.get";
 
 import "./styles.scss";
 
@@ -34,10 +38,10 @@ const useStore = create((set) => ({
 
   // Parameters
   winderDirection: DIRECTION_CW,
-  targetSpeed: 0,
-  targetWinds: 0,
-  windsPerLayer: 0,
-  bobbinHeight: 0,
+  targetSpeed: null,
+  targetWinds: null,
+  windsPerLayer: null,
+  bobbinHeight: null,
   jogDistance: 10, // client only
 
   // Setters
@@ -49,6 +53,52 @@ const useStore = create((set) => ({
   setBobbinHeight: (bobbinHeight) => set(() => ({ bobbinHeight })),
   setJogDistance: (jogDistance) => set(() => ({ jogDistance })),
 }));
+
+const schema = yup.object().shape({
+  targetSpeed: yup
+    .number()
+    .typeError("Must be number")
+    .positive()
+    .integer()
+    .min(5)
+    .max(TARGET_SPEED_MAX)
+    .required()
+    .label("Target speed"),
+  targetWinds: yup
+    .number()
+    .typeError("Must be number")
+    .positive()
+    .integer()
+    .min(1)
+    .max(UINT_MAX)
+    .required()
+    .label("Target winds"),
+  windsPerLayer: yup
+    .number()
+    .typeError("Must be number")
+    .positive()
+    .integer()
+    .min(1)
+    .max(UINT_MAX)
+    .required()
+    .label("Winds per layer"),
+  bobbinHeight: yup
+    .number()
+    .typeError("Must be number")
+    .positive()
+    .min(1)
+    .max(BOBBIN_HEIGHT_MAX)
+    .required()
+    .label("Bobbin height"),
+  jogDistance: yup
+    .number()
+    .typeError("Must be number")
+    .positive()
+    .min(0.01)
+    .max(50)
+    .required()
+    .label("Jog distance"),
+});
 
 // Update controller with current parameters
 function postConnect() {
@@ -64,10 +114,10 @@ function postConnect() {
       ? "SET_WINDER_DIRECTION_CW"
       : "SET_WINDER_DIRECTION_CCW"
   );
-  writeCommand("T", targetSpeed);
-  writeCommand("SET_TARGET_WINDS", targetWinds);
-  writeCommand("SET_WINDS_PER_LAYER", windsPerLayer);
-  writeCommand("SET_BOBBIN_HEIGHT", bobbinHeight);
+  writeCommand("T", targetSpeed || 0);
+  writeCommand("SET_TARGET_WINDS", targetWinds || 0);
+  writeCommand("SET_WINDS_PER_LAYER", windsPerLayer || 0);
+  writeCommand("SET_BOBBIN_HEIGHT", bobbinHeight || 0);
 }
 
 function handleMessage(message) {
@@ -178,7 +228,7 @@ function syncParameter(parameter, commandOrCommandValueFn) {
       (typeof commandOrCommandValueFn === "function"
         ? writeCommand(...commandOrCommandValueFn(v))
         : writeCommand(commandOrCommandValueFn, v)),
-    (state) => [state[parameter], state.connection],
+    (state) => [state[parameter] || 0, state.connection],
     shallow
   );
 }
@@ -311,70 +361,71 @@ function Connection() {
 }
 
 function Parameter({
-  isFloat = false,
   getterKey,
   setterKey,
   allowWhenRunning = false,
   allowWhenHomingOrJogging = false,
   allowWhenHasWinds = false,
   className = null,
-  max = null,
   ...restProps
 }) {
+  const { register, errors, watch } = useFormContext();
+
   const running = useStore((store) => store.running);
   const homingOrJogging = useStore((store) => store.homing || store.jogging);
   const hasWinds = useStore((store) => store.winds > 0);
-  const value = useStore((store) => store[getterKey]);
-  const setter = useStore((store) => store[setterKey]);
 
-  const [temp, setTemp] = useState(`${value}`);
+  const valueFromStore = useStore((store) => store[getterKey]);
+  const setStoreValue = useStore((store) => store[setterKey]);
 
-  const isValid = max === null ? true : parseFloat(temp) <= max;
+  const value = watch(getterKey);
+  const hasError = !!errors[getterKey];
 
+  // Sync form value to store value
+  // NOTE does not sync other direction (store to value)
   useEffect(() => {
-    setTemp(`${value}`);
-  }, [value]);
-
-  const onChange = (e) => {
-    const v = e.target.value;
-    if (v.match(isFloat ? /^\d+\.?\d{0,2}$/ : /^\d+$/) || v === "") {
-      setTemp(e.target.value);
+    const parsed = (!hasError && parseFloat(value)) || null;
+    if (parsed !== valueFromStore) {
+      setStoreValue(parsed);
     }
-  };
-
-  const onEnterOrBlur = () => {
-    setter(isValid ? parseFloat(temp) : 0);
-  };
+  }, [hasError, value, valueFromStore]);
 
   return (
     <input
       type="text"
       {...restProps}
-      className={classNames(className, !isValid && "is-invalid")}
+      ref={register}
+      name={getterKey}
+      defaultValue={`${valueFromStore === null ? "" : valueFromStore}`}
+      className={classNames(className, hasError && "is-invalid")}
       disabled={
         (!allowWhenRunning && running) ||
         (!allowWhenHomingOrJogging && homingOrJogging) ||
         (!allowWhenHasWinds && hasWinds)
       }
-      onChange={onChange}
-      onBlur={onEnterOrBlur}
-      onKeyUp={(e) => {
-        if (e.key === "Enter") {
-          onEnterOrBlur();
-        }
-      }}
-      value={temp}
     />
   );
 }
 
-function ParameterField({ id, label, ...restProps }) {
+function FormError({ getterKey }) {
+  const { errors } = useFormContext();
+  const message = get(errors, [getterKey, "message"]);
+  return message ? <div className="invalid-feedback">{message}</div> : null;
+}
+
+function ParameterField({ id, label, getterKey, ...restProps }) {
   return (
     <div className="mb-3">
       <label htmlFor={id} className="form-label">
         {label}
       </label>
-      <Parameter id={id} className="form-control" {...restProps} />
+      <Parameter
+        id={id}
+        className="form-control"
+        getterKey={getterKey}
+        {...restProps}
+      />
+      <FormError getterKey={getterKey} />
     </div>
   );
 }
@@ -431,10 +482,10 @@ function okToStart(store) {
     !store.jogging &&
     !store.running &&
     store.threaderLeftLimit > 0 &&
-    store.windsPerLayer > 0 &&
-    store.bobbinHeight > 0 &&
+    store.targetSpeed > 0 &&
     store.targetWinds > 0 &&
-    store.threaderLeftLimit > 0
+    store.windsPerLayer > 0 &&
+    store.bobbinHeight > 0
   );
 }
 
@@ -472,6 +523,7 @@ function BasicControlButton({
   requireHomed = false,
   requireThreaderLeftLimit = false,
   requireNoWinds = false,
+  requireJogDistance = false,
   brand = "light",
   ...restProps
 }) {
@@ -482,13 +534,15 @@ function BasicControlButton({
   const homed = useStore((store) => store.homed);
   const hasThreaderLeftLimit = useStore((store) => store.threaderLeftLimit > 0);
   const hasWinds = useStore((store) => store.winds > 0);
+  const jogDistance = useStore((store) => store.jogDistance);
   return (
     <button
       disabled={
         !ok ||
         (requireHomed && !homed) ||
         (requireThreaderLeftLimit && !hasThreaderLeftLimit) ||
-        (requireNoWinds && hasWinds)
+        (requireNoWinds && hasWinds) ||
+        (requireJogDistance && !jogDistance)
       }
       className={`btn btn-${brand}`}
       {...restProps}
@@ -521,164 +575,167 @@ function StateBadge() {
 }
 
 function ControlPage() {
+  const methods = useForm({
+    mode: "all",
+    resolver: yupResolver(schema),
+  });
+
   return (
-    <div className="row">
-      <div className="col">
-        <div className="py-1">
-          <h2>
-            Status <StateBadge />
-          </h2>
-          <StatusPart storeKey="winds" label="Winds">
-            {(winds) => winds}
-          </StatusPart>
-          <StatusPart storeKey="speed" label="Speed">
-            {(speed) => `${speed}rpm`}
-          </StatusPart>
-          <StatusPart storeKey="homed" label="Homed">
-            {(homed) =>
-              homed ? (
-                <span className="text-success">Yes</span>
-              ) : (
-                <span className="text-danger">No</span>
-              )
-            }
-          </StatusPart>
-          <StatusPart storeKey="threaderLeftLimit" label="Start Position">
-            {(threaderLeftLimit) =>
-              threaderLeftLimit === 0 ? (
-                <span className="text-danger">Not set</span>
-              ) : (
-                `${threaderLeftLimit}mm`
-              )
-            }
-          </StatusPart>
-        </div>
-        <div className="py-1">
-          <h2>Pickup</h2>
-          <ParameterField
-            id="target-winds"
-            label="Target Winds"
-            getterKey="targetWinds"
-            setterKey="setTargetWinds"
-            max={UINT_MAX}
-          />
-          <div className="row">
-            <div className="col">
-              <ParameterField
-                isFloat
-                id="bobbin-height"
-                label="Bobbin Height (mm)"
-                getterKey="bobbinHeight"
-                setterKey="setBobbinHeight"
-                max={BOBBIN_HEIGHT_MAX}
-              />
-            </div>
-            <div className="col">
-              <ParameterField
-                id="winds-per-layer"
-                label="Winds per Layer"
-                getterKey="windsPerLayer"
-                setterKey="setWindsPerLayer"
-                max={UINT_MAX}
-              />
-            </div>
+    <FormProvider {...methods}>
+      <div className="row">
+        <div className="col">
+          <div className="py-1">
+            <h2>
+              Status <StateBadge />
+            </h2>
+            <StatusPart storeKey="winds" label="Winds">
+              {(winds) => winds}
+            </StatusPart>
+            <StatusPart storeKey="speed" label="Speed">
+              {(speed) => `${speed}rpm`}
+            </StatusPart>
+            <StatusPart storeKey="homed" label="Homed">
+              {(homed) =>
+                homed ? (
+                  <span className="text-success">Yes</span>
+                ) : (
+                  <span className="text-danger">No</span>
+                )
+              }
+            </StatusPart>
+            <StatusPart storeKey="threaderLeftLimit" label="Start Position">
+              {(threaderLeftLimit) =>
+                threaderLeftLimit === 0 ? (
+                  <span className="text-danger">Not set</span>
+                ) : (
+                  `${threaderLeftLimit}mm`
+                )
+              }
+            </StatusPart>
           </div>
-        </div>
-      </div>
-      <div className="col">
-        <div className="py-1">
-          <h2>Connection</h2>
-          <Connection />
-        </div>
-        <div className="py-1">
-          <h2>Controls</h2>
-          <div className="row">
-            <div className="col">
-              <ParameterField
-                id="target-speed"
-                label="Target Speed"
-                getterKey="targetSpeed"
-                setterKey="setTargetSpeed"
-                // BUG Should be able to set while running. Currently works
-                // ok when setting a higher value, but not a lower value.
-                // allowWhenRunning
-                allowWhenHasWinds
-                max={TARGET_SPEED_MAX}
-              />
-            </div>
-            <div className="col">
-              <div className="mb-3">
-                <label htmlFor="winder-direction" className="form-label">
-                  Winder Direction
-                </label>
-                <WinderDirection
-                  id="winder-direction"
-                  className="form-select"
+          <div className="py-1">
+            <h2>Pickup</h2>
+            <ParameterField
+              id="target-winds"
+              label="Target Winds"
+              getterKey="targetWinds"
+              setterKey="setTargetWinds"
+            />
+            <div className="row">
+              <div className="col">
+                <ParameterField
+                  id="bobbin-height"
+                  label="Bobbin Height (mm)"
+                  getterKey="bobbinHeight"
+                  setterKey="setBobbinHeight"
+                />
+              </div>
+              <div className="col">
+                <ParameterField
+                  id="winds-per-layer"
+                  label="Winds per Layer"
+                  getterKey="windsPerLayer"
+                  setterKey="setWindsPerLayer"
                 />
               </div>
             </div>
           </div>
-          <div className="mb-3">
-            <StartButton /> <StopButton />{" "}
-            <BasicControlButton onClick={() => writeCommand("RESET_WINDS")}>
-              Reset Winds
-            </BasicControlButton>
-          </div>
         </div>
-        <div className="py-1">
-          <h3>Threader</h3>
-          <div className="mb-3">
-            <BasicControlButton onClick={home} requireNoWinds>
-              Home
-            </BasicControlButton>{" "}
-            <BasicControlButton
-              requireHomed
-              requireNoWinds
-              onClick={() => writeCommand("SET_THREADER_LEFT_LIMIT")}
-            >
-              Set Start Position
-            </BasicControlButton>
+        <div className="col">
+          <div className="py-1">
+            <h2>Connection</h2>
+            <Connection />
           </div>
-          <label htmlFor="jog-distance" className="form-label">
-            Jog
-          </label>
-          <div className="input-group mb-3">
-            <BasicControlButton
-              requireHomed
-              requireNoWinds
-              onClick={() => jog("JOG_THREADER_LEFT")}
-            >
-              Left
-            </BasicControlButton>{" "}
-            <BasicControlButton
-              requireHomed
-              requireNoWinds
-              onClick={() => jog("JOG_THREADER_RIGHT")}
-            >
-              Right
-            </BasicControlButton>
-            <Parameter
-              isFloat
-              id="jog-distance"
-              className="form-control"
-              getterKey="jogDistance"
-              setterKey="setJogDistance"
-            />
-            <span className="input-group-text">mm</span>
+          <div className="py-1">
+            <h2>Controls</h2>
+            <div className="row">
+              <div className="col">
+                <ParameterField
+                  id="target-speed"
+                  label="Target Speed"
+                  getterKey="targetSpeed"
+                  setterKey="setTargetSpeed"
+                  // BUG Should be able to set while running. Currently works
+                  // ok when setting a higher value, but not a lower value.
+                  // allowWhenRunning
+                  allowWhenHasWinds
+                />
+              </div>
+              <div className="col">
+                <div className="mb-3">
+                  <label htmlFor="winder-direction" className="form-label">
+                    Winder Direction
+                  </label>
+                  <WinderDirection
+                    id="winder-direction"
+                    className="form-select"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="mb-3">
+              <StartButton /> <StopButton />{" "}
+              <BasicControlButton onClick={() => writeCommand("RESET_WINDS")}>
+                Reset Winds
+              </BasicControlButton>
+            </div>
           </div>
-          <div className="mb-3">
-            <BasicControlButton
-              requireHomed
-              requireThreaderLeftLimit
-              requireNoWinds
-              onClick={() => jog("JOG_THREADER_TO_LEFT_LIMIT", false)}
-            >
-              Jog to Start Position
-            </BasicControlButton>
+          <div className="py-1">
+            <h3>Threader</h3>
+            <div className="mb-3">
+              <BasicControlButton onClick={home} requireNoWinds>
+                Home
+              </BasicControlButton>{" "}
+              <BasicControlButton
+                requireHomed
+                requireNoWinds
+                onClick={() => writeCommand("SET_THREADER_LEFT_LIMIT")}
+              >
+                Set Start Position
+              </BasicControlButton>
+            </div>
+            <label htmlFor="jog-distance" className="form-label">
+              Jog
+            </label>
+            <div className="input-group mb-3">
+              <BasicControlButton
+                requireHomed
+                requireNoWinds
+                requireJogDistance
+                onClick={() => jog("JOG_THREADER_LEFT")}
+              >
+                Left
+              </BasicControlButton>{" "}
+              <BasicControlButton
+                requireHomed
+                requireNoWinds
+                requireJogDistance
+                onClick={() => jog("JOG_THREADER_RIGHT")}
+              >
+                Right
+              </BasicControlButton>
+              <Parameter
+                id="jog-distance"
+                className="form-control"
+                getterKey="jogDistance"
+                setterKey="setJogDistance"
+              />
+              <span className="input-group-text">mm</span>
+            </div>
+            <div className="mb-3">
+              <BasicControlButton
+                requireHomed
+                requireThreaderLeftLimit
+                requireNoWinds
+                onClick={() => jog("JOG_THREADER_TO_LEFT_LIMIT", false)}
+              >
+                Jog to Start Position
+              </BasicControlButton>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </FormProvider>
   );
 }
 

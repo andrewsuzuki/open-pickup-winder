@@ -2,6 +2,7 @@
 #include <AccelStepper.h>
 
 // TODO protect against jogs past limits
+// TODO generic error (start, reset, etc)
 // TODO FUTURE potentially use threader runSpeed/setSpeed instead of run/setMaxSpeed
 
 #define version 1
